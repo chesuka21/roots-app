@@ -3,6 +3,7 @@
 Versión web real de la app (fuera del sandbox de artifacts de Claude), para
 que las imágenes de Unsplash carguen de verdad — varias por palabra.
 
+
 ## Qué cambió respecto a la versión de chat
 
 - **Imágenes**: ahora se buscan de verdad en Unsplash (varias por palabra,
