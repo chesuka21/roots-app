@@ -12,6 +12,10 @@ async function callClaude(prompt, max_tokens) {
     body: JSON.stringify({ prompt, max_tokens }),
   });
   const data = await response.json();
+  if (!response.ok) {
+    const msg = data?.error?.message || data?.error || `Claude request failed (${response.status})`;
+    throw new Error(msg);
+  }
   const text = (data.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text)
@@ -446,7 +450,7 @@ export default function VocabGraph() {
         sentence: connections[0]?.sentence || f.sentence,
       }));
     } catch (e) {
-      setGenError("Couldn't generate the definition — try again, or fill it in yourself.");
+      setGenError(`Couldn't generate: ${e.message || e}`);
       setGenerating(false);
       return;
     }
@@ -831,7 +835,7 @@ export default function VocabGraph() {
                     const result = await checkSentence(w.en, sentenceInput.trim());
                     setCheckResult(result);
                   } catch (e) {
-                    setCheckResult({ correct: false, corrected: "", note: "Couldn't check that — try again." });
+                    setCheckResult({ correct: false, corrected: "", note: `Couldn't check that: ${e.message || e}` });
                   }
                   setChecking(false);
                 }}
