@@ -340,6 +340,7 @@ export default function VocabGraph() {
   const pointersRef = useRef(new Map());
   const panStartRef = useRef(null);
   const pinchDistRef = useRef(null);
+  const tapRef = useRef(null); // { nodeId, x, y, moved }
 
   const clampK = (k) => Math.min(3.5, Math.max(0.4, k));
   const anchor = { x: dimsRef.current.w / 2, y: dimsRef.current.h / 2 };
@@ -360,14 +361,20 @@ export default function VocabGraph() {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointersRef.current.size === 1) {
       panStartRef.current = { x: e.clientX, y: e.clientY, tx: transformRef.current.x, ty: transformRef.current.y };
+      const nodeEl = e.target.closest && e.target.closest("[data-node-id]");
+      tapRef.current = { nodeId: nodeEl ? nodeEl.getAttribute("data-node-id") : null, x: e.clientX, y: e.clientY, moved: false };
     } else if (pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()];
       pinchDistRef.current = Math.hypot(a.x - b.x, a.y - b.y);
+      tapRef.current = null; // a second finger landed — this is a pinch, not a tap
     }
   };
   const onSvgPointerMove = (e) => {
     if (!pointersRef.current.has(e.pointerId)) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (tapRef.current && Math.hypot(e.clientX - tapRef.current.x, e.clientY - tapRef.current.y) > 6) {
+      tapRef.current.moved = true; // dragged too far — this is a pan, not a tap
+    }
     if (pointersRef.current.size === 1 && panStartRef.current) {
       const start = panStartRef.current; // snapshot now — panStartRef.current can be nulled
                                           // by pointerup before React flushes the state update below
@@ -390,6 +397,11 @@ export default function VocabGraph() {
     } else if (pointersRef.current.size === 0) {
       panStartRef.current = null;
     }
+    // resolve tap: it counts as a tap only if nothing else was already down and it never moved far
+    if (tapRef.current && !tapRef.current.moved && pointersRef.current.size === 0) {
+      setSelected(tapRef.current.nodeId || null);
+    }
+    if (pointersRef.current.size === 0) tapRef.current = null;
   };
 
   useEffect(() => {
@@ -534,7 +546,6 @@ export default function VocabGraph() {
         ref={svgRef}
         viewBox={`0 0 ${dimsRef.current.w} ${dimsRef.current.h}`}
         style={styles.svg}
-        onClick={() => setSelected(null)}
         onPointerDown={onSvgPointerDown}
         onPointerMove={onSvgPointerMove}
         onPointerUp={endPointer}
@@ -574,8 +585,8 @@ export default function VocabGraph() {
           return (
             <g
               key={n.id}
+              data-node-id={n.id}
               transform={`translate(${n.x || 0},${n.y || 0})`}
-              onClick={(e) => { e.stopPropagation(); setSelected(n.id); }}
               style={{ cursor: "pointer" }}
             >
               <circle r={r + 4} fill="none" stroke={catColor} strokeWidth={1.2} opacity={0.55} />
