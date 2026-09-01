@@ -342,14 +342,11 @@ export default function VocabGraph() {
     }
   };
 
-  const bridgeFor = (id) => {
-    if (!data) return null;
-    const edge = data.edges.find(
-      (e) => (e.source === id && learnedSet.has(e.target)) || (e.target === id && learnedSet.has(e.source))
-    );
-    if (!edge) return null;
-    const otherId = edge.source === id ? edge.target : edge.source;
-    return { sentence: edge.sentence, other: otherId };
+  const bridgesFor = (id) => {
+    if (!data) return [];
+    return data.edges
+      .filter((e) => e.source === id || e.target === id)
+      .map((e) => ({ sentence: e.sentence, other: e.source === id ? e.target : e.source }));
   };
 
   // (individual node dragging removed — panning/zooming the whole canvas instead)
@@ -698,9 +695,12 @@ export default function VocabGraph() {
                       <div style={styles.panelImgFallback}><CategoryIcon cat={w.cat} /></div>
                     )}
                     <p style={styles.panelDef}>{w.def}</p>
-                    <div style={styles.exampleBox}>
-                      <p style={styles.exampleEn}>{w.standalone}</p>
-                    </div>
+                    {(bridgesFor(w.id).length ? bridgesFor(w.id) : [{ sentence: w.standalone, other: null }]).map((ex, i) => (
+                      <div style={styles.exampleBox} key={i}>
+                        <p style={styles.exampleEn}>{ex.sentence}</p>
+                        {ex.other && <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>}
+                      </div>
+                    ))}
                     <p style={styles.formHint}>How well did you remember it?</p>
                     <div style={styles.gradeRow}>
                       <button style={styles.gradeAgain} onClick={() => { gradeReview(id, "again"); nextReviewCard(); }}>Again</button>
@@ -816,8 +816,8 @@ export default function VocabGraph() {
         const w = data.nodes[selected];
         if (!w) return null;
         const st = status(w.id);
-        const bridge = st !== "learned" ? bridgeFor(w.id) : null;
-        const sentence = bridge ? bridge.sentence : w.standalone;
+        const bridges = bridgesFor(w.id);
+        const examples = bridges.length ? bridges : [{ sentence: w.standalone, other: null }];
         const hasOwnImages = w.images && w.images.length > 0;
         return (
           <div style={styles.panelOverlay} onClick={() => setSelected(null)}>
@@ -844,10 +844,12 @@ export default function VocabGraph() {
               </span>
               <h2 style={styles.panelWord}>{w.en}</h2>
               <p style={styles.panelDef}>{w.def}</p>
-              <div style={styles.exampleBox}>
-                <p style={styles.exampleEn}>{sentence}</p>
-                {bridge && <p style={styles.bridgeNote}>connects to “{bridge.other}”</p>}
-              </div>
+              {examples.map((ex, i) => (
+                <div style={styles.exampleBox} key={i}>
+                  <p style={styles.exampleEn}>{ex.sentence}</p>
+                  {ex.other && <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>}
+                </div>
+              ))}
               {st === "learned" ? (
                 <div style={styles.learnedTag}>
                   <Check size={16} color="#6FBF8B" /> Already learned
