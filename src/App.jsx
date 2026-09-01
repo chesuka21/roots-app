@@ -23,9 +23,13 @@ async function callClaude(prompt, max_tokens) {
   return text.replace(/```json|```/g, "").trim();
 }
 
-async function findImages(word) {
+async function findImages(word, category) {
+  // Include the category in the search so ambiguous words land on the right
+  // sense — e.g. "exam" alone skews toward medical checkup photos on stock
+  // sites; "exam school" points it at the classroom-test sense instead.
+  const query = category ? `${word} ${category}` : word;
   try {
-    const res = await fetch(`/api/pexels?q=${encodeURIComponent(word)}`);
+    const res = await fetch(`/api/pexels?q=${encodeURIComponent(query)}`);
     const data = await res.json();
     return data.images || [];
   } catch (e) {
@@ -287,9 +291,9 @@ export default function VocabGraph() {
   );
 
   const [imgSearching, setImgSearching] = useState(false);
-  const searchImagesForNode = async (id, word) => {
+  const searchImagesForNode = async (id, word, category) => {
     setImgSearching(true);
-    const images = await findImages(word);
+    const images = await findImages(word, category);
     if (images.length) {
       setData((prev) => ({ ...prev, nodes: { ...prev.nodes, [id]: { ...prev.nodes[id], images } } }));
     }
@@ -447,6 +451,7 @@ export default function VocabGraph() {
     const existingWords = Object.values(data.nodes).map((n) => ({ id: n.id, en: n.en, cat: n.cat }));
 
     // 1) definition + connections: required, this is the part that must succeed
+    let generatedCategory = form.cat;
     try {
       const details = await generateWordDetails(form.word.trim(), existingWords);
       const byName = {};
@@ -454,6 +459,7 @@ export default function VocabGraph() {
       const connections = (details.connections || [])
         .map((c) => ({ targetId: byName[(c.word || "").toLowerCase()], sentence: c.sentence, checked: true }))
         .filter((c) => c.targetId);
+      generatedCategory = details.category || generatedCategory;
       setForm((f) => ({
         ...f,
         def: details.definition || f.def,
@@ -468,7 +474,7 @@ export default function VocabGraph() {
     }
 
     // 2) images: real search now works (this is a real server, not a sandboxed artifact)
-    const images = await findImages(form.word.trim());
+    const images = await findImages(form.word.trim(), generatedCategory);
     setForm((f) => ({ ...f, images }));
     setGenerating(false);
   };
@@ -805,7 +811,7 @@ export default function VocabGraph() {
                   ))}
                 </div>
               ) : (
-                <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en)} disabled={imgSearching}>
+                <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en, w.cat)} disabled={imgSearching}>
                   {imgSearching ? <Loader2 size={15} className="spin" /> : <CategoryIcon cat={w.cat} size={20} />}
                   {imgSearching ? "Searching…" : "Find images"}
                 </button>
