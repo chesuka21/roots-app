@@ -23,11 +23,31 @@ async function callClaude(prompt, max_tokens) {
   return text.replace(/```json|```/g, "").trim();
 }
 
-async function findImages(word, category) {
-  // Include the category in the search so ambiguous words land on the right
-  // sense — e.g. "exam" alone skews toward medical checkup photos on stock
-  // sites; "exam school" points it at the classroom-test sense instead.
-  const query = category ? `${word} ${category}` : word;
+const IMAGE_QUERY_STOPWORDS = new Set([
+  "a", "an", "the", "to", "of", "when", "who", "that", "which", "with", "for", "and", "or",
+  "is", "are", "was", "were", "in", "on", "at", "by", "from", "this", "it", "its", "you",
+  "your", "their", "they", "he", "she", "we", "i", "do", "does", "did", "be", "been", "being",
+  "have", "has", "had", "can", "could", "will", "would", "should", "not", "no", "so", "if",
+  "as", "about", "into", "over", "after", "before", "between", "up", "down", "out", "than",
+]);
+function keywordsFromDefinition(definition, max = 4) {
+  if (!definition) return "";
+  return definition
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .split(/\s+/)
+    .filter((w) => w && !IMAGE_QUERY_STOPWORDS.has(w))
+    .slice(0, max)
+    .join(" ");
+}
+
+async function findImages(word, category, definition) {
+  // Search on more than the bare word so ambiguous or abstract words land on
+  // the right sense — e.g. "meeting" alone could be anything, but "meeting
+  // time people gather talk" (word + category + definition keywords) points
+  // straight at the office/gathering meaning described in its definition.
+  const parts = [word, category, keywordsFromDefinition(definition)].filter(Boolean);
+  const query = parts.join(" ");
   try {
     const res = await fetch(`/api/pexels?q=${encodeURIComponent(query)}`);
     const data = await res.json();
@@ -291,9 +311,9 @@ export default function VocabGraph() {
   );
 
   const [imgSearching, setImgSearching] = useState(false);
-  const searchImagesForNode = async (id, word, category) => {
+  const searchImagesForNode = async (id, word, category, definition) => {
     setImgSearching(true);
-    const images = await findImages(word, category);
+    const images = await findImages(word, category, definition);
     if (images.length) {
       setData((prev) => ({ ...prev, nodes: { ...prev.nodes, [id]: { ...prev.nodes[id], images } } }));
     }
@@ -452,6 +472,7 @@ export default function VocabGraph() {
 
     // 1) definition + connections: required, this is the part that must succeed
     let generatedCategory = form.cat;
+    let generatedDefinition = form.def;
     try {
       const details = await generateWordDetails(form.word.trim(), existingWords);
       const byName = {};
@@ -460,6 +481,7 @@ export default function VocabGraph() {
         .map((c) => ({ targetId: byName[(c.word || "").toLowerCase()], sentence: c.sentence, checked: true }))
         .filter((c) => c.targetId);
       generatedCategory = details.category || generatedCategory;
+      generatedDefinition = details.definition || generatedDefinition;
       setForm((f) => ({
         ...f,
         def: details.definition || f.def,
@@ -474,7 +496,7 @@ export default function VocabGraph() {
     }
 
     // 2) images: real search now works (this is a real server, not a sandboxed artifact)
-    const images = await findImages(form.word.trim(), generatedCategory);
+    const images = await findImages(form.word.trim(), generatedCategory, generatedDefinition);
     setForm((f) => ({ ...f, images }));
     setGenerating(false);
   };
@@ -811,7 +833,7 @@ export default function VocabGraph() {
                   ))}
                 </div>
               ) : (
-                <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en, w.cat)} disabled={imgSearching}>
+                <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en, w.cat, w.def)} disabled={imgSearching}>
                   {imgSearching ? <Loader2 size={15} className="spin" /> : <CategoryIcon cat={w.cat} size={20} />}
                   {imgSearching ? "Searching…" : "Find images"}
                 </button>
