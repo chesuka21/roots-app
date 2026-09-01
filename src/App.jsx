@@ -219,9 +219,11 @@ export default function VocabGraph() {
   const [reviewQueue, setReviewQueue] = useState([]);
   const [reviewPos, setReviewPos] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [exampleIdx, setExampleIdx] = useState(0);
   useEffect(() => {
     setSentenceInput("");
     setCheckResult(null);
+    setExampleIdx(0);
   }, [selected]);
   const svgRef = useRef(null);
   const simRef = useRef(null);
@@ -339,6 +341,7 @@ export default function VocabGraph() {
     } else {
       setReviewPos(next);
       setRevealed(false);
+      setExampleIdx(0);
     }
   };
 
@@ -695,12 +698,27 @@ export default function VocabGraph() {
                       <div style={styles.panelImgFallback}><CategoryIcon cat={w.cat} /></div>
                     )}
                     <p style={styles.panelDef}>{w.def}</p>
-                    {(bridgesFor(w.id).length ? bridgesFor(w.id) : [{ sentence: w.standalone, other: null }]).map((ex, i) => (
-                      <div style={styles.exampleBox} key={i}>
-                        <p style={styles.exampleEn}>{ex.sentence}</p>
-                        {ex.other && <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>}
-                      </div>
-                    ))}
+                    {(() => {
+                      const revExamples = bridgesFor(w.id).length ? bridgesFor(w.id) : [{ sentence: w.standalone, other: null }];
+                      const ex = revExamples[Math.min(exampleIdx, revExamples.length - 1)];
+                      return (
+                        <div style={styles.exampleBox}>
+                          <p style={styles.exampleEn}>{ex.sentence}</p>
+                          <div style={styles.exampleFooter}>
+                            {ex.other ? (
+                              <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
+                            ) : <span />}
+                            {revExamples.length > 1 && (
+                              <div style={styles.examplePager}>
+                                <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + revExamples.length) % revExamples.length)}>‹</button>
+                                <span style={styles.pagerCount}>{exampleIdx + 1}/{revExamples.length}</span>
+                                <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % revExamples.length)}>›</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <p style={styles.formHint}>How well did you remember it?</p>
                     <div style={styles.gradeRow}>
                       <button style={styles.gradeAgain} onClick={() => { gradeReview(id, "again"); nextReviewCard(); }}>Again</button>
@@ -844,12 +862,26 @@ export default function VocabGraph() {
               </span>
               <h2 style={styles.panelWord}>{w.en}</h2>
               <p style={styles.panelDef}>{w.def}</p>
-              {examples.map((ex, i) => (
-                <div style={styles.exampleBox} key={i}>
-                  <p style={styles.exampleEn}>{ex.sentence}</p>
-                  {ex.other && <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>}
-                </div>
-              ))}
+              {(() => {
+                const ex = examples[Math.min(exampleIdx, examples.length - 1)];
+                return (
+                  <div style={styles.exampleBox}>
+                    <p style={styles.exampleEn}>{ex.sentence}</p>
+                    <div style={styles.exampleFooter}>
+                      {ex.other ? (
+                        <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
+                      ) : <span />}
+                      {examples.length > 1 && (
+                        <div style={styles.examplePager}>
+                          <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + examples.length) % examples.length)}>‹</button>
+                          <span style={styles.pagerCount}>{exampleIdx + 1}/{examples.length}</span>
+                          <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % examples.length)}>›</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               {st === "learned" ? (
                 <div style={styles.learnedTag}>
                   <Check size={16} color="#6FBF8B" /> Already learned
@@ -961,6 +993,10 @@ const styles = {
   exampleBox: { background: "#12181b", borderRadius: 10, padding: "12px 14px", marginBottom: 18, borderLeft: "3px solid #6FBF8B" },
   exampleEn: { margin: 0, fontSize: 14.5, color: "#eae4d8" },
   bridgeNote: { margin: "6px 0 0", fontSize: 11.5, color: "#D9A441", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  exampleFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 },
+  examplePager: { display: "flex", alignItems: "center", gap: 8 },
+  pagerBtn: { background: "none", border: "1px solid #2f3b42", color: "#eae4d8", borderRadius: 6, width: 24, height: 24, fontSize: 15, cursor: "pointer", lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center" },
+  pagerCount: { fontSize: 10.5, color: "#71807d", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   learnedTag: { display: "flex", alignItems: "center", gap: 8, color: "#6FBF8B", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13 },
   learnBtn: { width: "100%", background: "#6FBF8B", color: "#12181b", border: "none", borderRadius: 10, padding: "13px 16px", fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontFamily: "inherit", marginTop: 6 },
   formHint: { fontSize: 12, color: "#71807d", margin: "4px 0 16px" },
