@@ -5,15 +5,33 @@ import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOp
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Anthropic and
    Pexels API keys stay on the server and never reach the browser. ---------- */
-async function callClaude(prompt, max_tokens) {
-  const response = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, max_tokens }),
-  });
+async function callClaude(prompt, max_tokens, attempt = 1) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000); // never hang forever — fail after 20s instead
+  let response;
+  try {
+    response = await fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, max_tokens }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Request timed out — try again.");
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
   const data = await response.json();
   if (!response.ok) {
     const msg = data?.error?.message || data?.error || `Claude request failed (${response.status})`;
+    // the free Gemini tier occasionally reports "high demand" (shared, global
+    // capacity) — that's transient, so retry a couple times before giving up
+    const overloaded = /high demand|overloaded|try again/i.test(String(msg));
+    if (overloaded && attempt < 3) {
+      await new Promise((r) => setTimeout(r, attempt * 1200));
+      return callClaude(prompt, max_tokens, attempt + 1);
+    }
     throw new Error(msg);
   }
   const text = (data.content || [])
