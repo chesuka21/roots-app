@@ -245,7 +245,7 @@ export default function VocabGraph() {
   }, [selected]);
   const svgRef = useRef(null);
   const simRef = useRef(null);
-  const dimsRef = useRef({ w: 800, h: 560 });
+  const dimsRef = useRef({ w: 800, h: 820 }); // taller than wide, so the map actually fills a phone screen instead of leaving dead space below it
   const [, forceTick] = useState(0);
   const catColorsRef = useRef({});
 
@@ -985,7 +985,7 @@ const styles = {
   legendItem: { display: "flex", alignItems: "center", gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: "50%", display: "inline-block" },
   addBtn: { display: "flex", alignItems: "center", gap: 5, background: "#1c2530", border: "1px solid #2f3b42", color: "#eae4d8", borderRadius: 20, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
-  svg: { width: "100%", height: "auto", borderRadius: 14, border: "1px solid #232d32", touchAction: "none", display: "block", userSelect: "none", WebkitUserSelect: "none" },
+  svg: { width: "100%", height: "auto", maxHeight: "72vh", borderRadius: 14, border: "1px solid #232d32", touchAction: "none", display: "block", userSelect: "none", WebkitUserSelect: "none" },
   canvasWrap: { position: "relative" },
   zoomControls: { position: "absolute", bottom: 14, right: 14, display: "flex", flexDirection: "column", gap: 6 },
   zoomBtn: { width: 32, height: 32, borderRadius: 8, background: "#1c2530", border: "1px solid #2f3b42", color: "#eae4d8", fontSize: 17, cursor: "pointer", lineHeight: "1" },
