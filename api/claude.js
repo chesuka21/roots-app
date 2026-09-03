@@ -44,28 +44,43 @@ async function callGemini(prompt) {
 
 async function callGroq(prompt) {
   if (!process.env.GROQ_API_KEY) throw new Error("GROQ_API_KEY is not set");
-  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-  const r = await withTimeout(
-    (signal) =>
-      fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
-        signal,
-      }),
-    25000
-  );
-  const data = await r.json();
-  if (!r.ok) {
-    const err = new Error(data?.error?.message || `Groq error ${r.status}`);
-    err.status = r.status;
-    err.data = data;
-    throw err;
+  // Groq's lineup changes over time and a hardcoded name can go stale, so try
+  // a short list of currently-common models in order instead of betting on
+  // just one. GROQ_MODEL (if set) always goes first.
+  const candidates = [
+    process.env.GROQ_MODEL,
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "gemma2-9b-it",
+  ].filter(Boolean);
+
+  let lastErr;
+  for (const model of candidates) {
+    try {
+      const r = await withTimeout(
+        (signal) =>
+          fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            },
+            body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
+            signal,
+          }),
+        20000
+      );
+      const data = await r.json();
+      if (!r.ok) {
+        lastErr = new Error(data?.error?.message || `Groq error ${r.status} (model: ${model})`);
+        continue; // try the next candidate model
+      }
+      return data?.choices?.[0]?.message?.content || "";
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  return data?.choices?.[0]?.message?.content || "";
+  throw lastErr || new Error("No Groq model candidates worked");
 }
 
 export default async function handler(req, res) {
@@ -74,20 +89,26 @@ export default async function handler(req, res) {
   const { prompt } = req.body || {};
   if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
+  // Groq's free tier is much faster than Gemini's when Gemini is congested,
+  // so it goes first whenever it's configured; Gemini is the fallback.
+  const primary = process.env.GROQ_API_KEY ? callGroq : callGemini;
+  const fallback = process.env.GROQ_API_KEY ? callGemini : callGroq;
+  const primaryName = process.env.GROQ_API_KEY ? "Groq" : "Gemini";
+  const fallbackName = process.env.GROQ_API_KEY ? "Gemini" : "Groq";
+
   try {
-    const text = await callGemini(prompt);
+    const text = await primary(prompt);
     return res.status(200).json({ content: [{ type: "text", text }] });
-  } catch (geminiErr) {
-    console.error("Gemini failed, trying Groq fallback:", geminiErr.message);
-    if (!process.env.GROQ_API_KEY) {
-      return res.status(geminiErr.status || 500).json(geminiErr.data || { error: { message: geminiErr.message } });
-    }
+  } catch (primaryErr) {
+    console.error(`${primaryName} failed, trying ${fallbackName} fallback:`, primaryErr.message);
     try {
-      const text = await callGroq(prompt);
+      const text = await fallback(prompt);
       return res.status(200).json({ content: [{ type: "text", text }] });
-    } catch (groqErr) {
-      console.error("Groq fallback also failed:", groqErr.message);
-      return res.status(502).json({ error: { message: `Both providers failed. Gemini: ${geminiErr.message} — Groq: ${groqErr.message}` } });
+    } catch (fallbackErr) {
+      console.error(`${fallbackName} fallback also failed:`, fallbackErr.message);
+      return res.status(502).json({
+        error: { message: `Both providers failed. ${primaryName}: ${primaryErr.message} — ${fallbackName}: ${fallbackErr.message}` },
+      });
     }
   }
 }
