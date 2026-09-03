@@ -7,7 +7,7 @@ import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOp
    Pexels API keys stay on the server and never reach the browser. ---------- */
 async function callClaude(prompt, max_tokens, attempt = 1) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000); // never hang forever — fail after 20s instead
+  const timeout = setTimeout(() => controller.abort(), 45000); // the free Gemini tier can take 20-30s under load — never hang forever, but give it real room
   let response;
   try {
     response = await fetch("/api/claude", {
@@ -764,6 +764,7 @@ export default function VocabGraph() {
             {generating ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
             {generating ? "Generating…" : "Generate definition & connections"}
           </button>
+          {generating && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
           {genError && <p style={styles.genError}>{genError}</p>}
 
           <label style={styles.label}>Simple definition</label>
@@ -934,6 +935,7 @@ export default function VocabGraph() {
                 {checking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
                 {checking ? "Checking…" : "Check my sentence"}
               </button>
+              {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
               {checkResult && (
                 <div style={styles.exampleBox}>
                   {checkResult.correct ? (
