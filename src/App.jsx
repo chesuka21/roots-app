@@ -209,7 +209,7 @@ const STORAGE_KEY = "vocab-data";
 function buildGraphData() {
   const nodes = {};
   Object.entries(SEED_NODES).forEach(([id, n]) => {
-    nodes[id] = { id, en: id, def: n.def, cat: n.cat, images: [], standalone: n.def };
+    nodes[id] = { id, en: id, def: n.def, cat: n.cat, images: [], standalone: n.def, userExamples: [] };
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
@@ -238,10 +238,12 @@ export default function VocabGraph() {
   const [reviewPos, setReviewPos] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [exampleIdx, setExampleIdx] = useState(0);
+  const [savedExample, setSavedExample] = useState(false);
   useEffect(() => {
     setSentenceInput("");
     setCheckResult(null);
     setExampleIdx(0);
+    setSavedExample(false);
   }, [selected]);
   const svgRef = useRef(null);
   const simRef = useRef(null);
@@ -370,6 +372,30 @@ export default function VocabGraph() {
       .map((e) => ({ sentence: e.sentence, other: e.source === id ? e.target : e.source }));
   };
 
+  // your own checked/corrected sentences, shown first — they're what you
+  // actually practiced with, ahead of the system's pre-written examples
+  const allExamplesFor = (id) => {
+    const node = data?.nodes?.[id];
+    const mine = (node?.userExamples || []).map((s) => ({ sentence: s, other: null, mine: true }));
+    const system = bridgesFor(id);
+    const combined = [...mine, ...system];
+    return combined.length ? combined : [{ sentence: node?.standalone, other: null }];
+  };
+
+  const addUserExample = (id, sentence) => {
+    const clean = sentence.trim();
+    if (!clean) return;
+    setData((prev) => {
+      const node = prev.nodes[id];
+      if (!node) return prev;
+      if ((node.userExamples || []).includes(clean)) return prev; // no duplicates
+      return {
+        ...prev,
+        nodes: { ...prev.nodes, [id]: { ...node, userExamples: [...(node.userExamples || []), clean] } },
+      };
+    });
+  };
+
   // (individual node dragging removed — panning/zooming the whole canvas instead)
 
   /* --- pan & zoom, implemented directly with pointer/wheel events ---
@@ -470,6 +496,7 @@ export default function VocabGraph() {
           cat: form.cat.trim() || "custom",
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
+          userExamples: [],
         },
       };
       const newEdges = form.connections
@@ -717,13 +744,15 @@ export default function VocabGraph() {
                     )}
                     <p style={styles.panelDef}>{w.def}</p>
                     {(() => {
-                      const revExamples = bridgesFor(w.id).length ? bridgesFor(w.id) : [{ sentence: w.standalone, other: null }];
+                      const revExamples = allExamplesFor(w.id);
                       const ex = revExamples[Math.min(exampleIdx, revExamples.length - 1)];
                       return (
                         <div style={styles.exampleBox}>
                           <p style={styles.exampleEn}>{ex.sentence}</p>
                           <div style={styles.exampleFooter}>
-                            {ex.other ? (
+                            {ex.mine ? (
+                              <p style={styles.mineNote}>✎ your example</p>
+                            ) : ex.other ? (
                               <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
                             ) : <span />}
                             {revExamples.length > 1 && (
@@ -853,8 +882,7 @@ export default function VocabGraph() {
         const w = data.nodes[selected];
         if (!w) return null;
         const st = status(w.id);
-        const bridges = bridgesFor(w.id);
-        const examples = bridges.length ? bridges : [{ sentence: w.standalone, other: null }];
+        const examples = allExamplesFor(w.id);
         const hasOwnImages = w.images && w.images.length > 0;
         return (
           <div style={styles.panelOverlay} onClick={() => setSelected(null)}>
@@ -887,7 +915,9 @@ export default function VocabGraph() {
                   <div style={styles.exampleBox}>
                     <p style={styles.exampleEn}>{ex.sentence}</p>
                     <div style={styles.exampleFooter}>
-                      {ex.other ? (
+                      {ex.mine ? (
+                        <p style={styles.mineNote}>✎ your example</p>
+                      ) : ex.other ? (
                         <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
                       ) : <span />}
                       {examples.length > 1 && (
@@ -915,7 +945,7 @@ export default function VocabGraph() {
               <input
                 style={styles.input}
                 value={sentenceInput}
-                onChange={(e) => { setSentenceInput(e.target.value); setCheckResult(null); }}
+                onChange={(e) => { setSentenceInput(e.target.value); setCheckResult(null); setSavedExample(false); }}
                 placeholder={`e.g. I ${w.en} ...`}
               />
               <button
@@ -944,6 +974,21 @@ export default function VocabGraph() {
                     <p style={styles.exampleEn}>{checkResult.corrected}</p>
                   )}
                   <p style={styles.bridgeNote}>{checkResult.note}</p>
+                  {checkResult.corrected !== undefined && checkResult.note && !checkResult.note.startsWith("Couldn't check") && (
+                    savedExample ? (
+                      <p style={styles.mineNote}>✓ Added to your examples</p>
+                    ) : (
+                      <button
+                        style={styles.smallAddBtn2}
+                        onClick={() => {
+                          addUserExample(w.id, checkResult.correct ? sentenceInput.trim() : checkResult.corrected);
+                          setSavedExample(true);
+                        }}
+                      >
+                        <Plus size={13} /> Add to my examples
+                      </button>
+                    )
+                  )}
                 </div>
               )}
             </div>
@@ -1013,6 +1058,8 @@ const styles = {
   exampleBox: { background: "#12181b", borderRadius: 10, padding: "12px 14px", marginBottom: 18, borderLeft: "3px solid #6FBF8B" },
   exampleEn: { margin: 0, fontSize: 14.5, color: "#eae4d8" },
   bridgeNote: { margin: "6px 0 0", fontSize: 11.5, color: "#D9A441", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  mineNote: { margin: "8px 0 0", fontSize: 11.5, color: "#8cc9d9", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  smallAddBtn2: { marginTop: 10, display: "flex", alignItems: "center", gap: 6, background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 8, padding: "7px 11px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   exampleFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 },
   examplePager: { display: "flex", alignItems: "center", gap: 8 },
   pagerBtn: { background: "none", border: "1px solid #2f3b42", color: "#eae4d8", borderRadius: 6, width: 24, height: 24, fontSize: 15, cursor: "pointer", lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center" },
