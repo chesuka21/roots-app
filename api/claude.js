@@ -1,8 +1,9 @@
-// Vercel serverless function — proxies AI requests to Google Gemini first,
-// falling back to Groq automatically if Gemini errors or times out (its
-// free tier gets congested sometimes). Neither key ever reaches the
-// browser. Route is still called /api/claude to match the existing client
-// code; both providers' replies get reshaped into the same
+// Vercel serverless function — proxies AI requests, racing multiple
+// providers instead of trying them one after another. Whichever key(s) you
+// set (GROQ_API_KEY, GEMINI_API_KEY) are used automatically; more can be
+// added later by adding another entry to PROVIDERS below. Neither key ever
+// reaches the browser. Route is still called /api/claude to match the
+// existing client code; every provider's reply gets reshaped into the same
 // {content:[{type:"text", text}]} format so nothing else has to change.
 
 async function withTimeout(promise, ms) {
@@ -16,7 +17,6 @@ async function withTimeout(promise, ms) {
 }
 
 async function callGemini(prompt) {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
   const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
   const r = await withTimeout(
     (signal) =>
@@ -32,18 +32,11 @@ async function callGemini(prompt) {
     25000
   );
   const data = await r.json();
-  if (!r.ok) {
-    const err = new Error(data?.error?.message || `Gemini error ${r.status}`);
-    err.status = r.status;
-    err.data = data;
-    throw err;
-  }
-  const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text).join("");
-  return text;
+  if (!r.ok) throw new Error(data?.error?.message || `Gemini error ${r.status}`);
+  return (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text).join("");
 }
 
 async function callGroq(prompt) {
-  if (!process.env.GROQ_API_KEY) throw new Error("GROQ_API_KEY is not set");
   // Groq's lineup changes over time and a hardcoded name can go stale, so try
   // a short list of currently-common models in order instead of betting on
   // just one. GROQ_MODEL (if set) always goes first.
@@ -73,7 +66,7 @@ async function callGroq(prompt) {
       const data = await r.json();
       if (!r.ok) {
         lastErr = new Error(data?.error?.message || `Groq error ${r.status} (model: ${model})`);
-        continue; // try the next candidate model
+        continue;
       }
       return data?.choices?.[0]?.message?.content || "";
     } catch (e) {
@@ -83,32 +76,60 @@ async function callGroq(prompt) {
   throw lastErr || new Error("No Groq model candidates worked");
 }
 
+// Add more providers here later — just give each a name, an env var that
+// must be set for it to be considered, and its call function.
+const PROVIDERS = [
+  { name: "Groq", envKey: "GROQ_API_KEY", fn: callGroq },
+  { name: "Gemini", envKey: "GEMINI_API_KEY", fn: callGemini },
+].filter((p) => !!process.env[p.envKey]);
+
+// Races all configured providers. The fastest one goes immediately; any
+// others start automatically after `staggerMs` if the first hasn't answered
+// yet, so a slow provider never blocks the others — first success wins.
+function raceProviders(prompt, providers, staggerMs = 5000) {
+  return new Promise((resolve, reject) => {
+    if (providers.length === 0) {
+      reject(new Error("No AI provider is configured (missing GROQ_API_KEY / GEMINI_API_KEY)"));
+      return;
+    }
+    let settled = false;
+    let pendingCount = providers.length;
+    const errors = [];
+
+    providers.forEach((p, i) => {
+      setTimeout(() => {
+        if (settled) return;
+        p.fn(prompt)
+          .then((text) => {
+            if (!settled) {
+              settled = true;
+              resolve({ text, provider: p.name });
+            }
+          })
+          .catch((e) => {
+            errors.push(`${p.name}: ${e.message}`);
+            pendingCount -= 1;
+            if (pendingCount === 0 && !settled) {
+              reject(new Error(errors.join(" — ")));
+            }
+          });
+      }, i * staggerMs);
+    });
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   const { prompt } = req.body || {};
   if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
-  // Groq's free tier is much faster than Gemini's when Gemini is congested,
-  // so it goes first whenever it's configured; Gemini is the fallback.
-  const primary = process.env.GROQ_API_KEY ? callGroq : callGemini;
-  const fallback = process.env.GROQ_API_KEY ? callGemini : callGroq;
-  const primaryName = process.env.GROQ_API_KEY ? "Groq" : "Gemini";
-  const fallbackName = process.env.GROQ_API_KEY ? "Gemini" : "Groq";
-
   try {
-    const text = await primary(prompt);
+    const { text, provider } = await raceProviders(prompt, PROVIDERS);
+    res.setHeader("X-AI-Provider", provider); // handy for checking which one answered, via Network tab
     return res.status(200).json({ content: [{ type: "text", text }] });
-  } catch (primaryErr) {
-    console.error(`${primaryName} failed, trying ${fallbackName} fallback:`, primaryErr.message);
-    try {
-      const text = await fallback(prompt);
-      return res.status(200).json({ content: [{ type: "text", text }] });
-    } catch (fallbackErr) {
-      console.error(`${fallbackName} fallback also failed:`, fallbackErr.message);
-      return res.status(502).json({
-        error: { message: `Both providers failed. ${primaryName}: ${primaryErr.message} — ${fallbackName}: ${fallbackErr.message}` },
-      });
-    }
+  } catch (e) {
+    console.error("All providers failed:", e.message);
+    return res.status(502).json({ error: { message: e.message } });
   }
 }
