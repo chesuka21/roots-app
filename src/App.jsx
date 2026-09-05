@@ -81,10 +81,11 @@ async function generateWordDetails(word, existingWords) {
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
-{"definition": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
+{"definition": "...", "definitionEs": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
 - "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words. Do not reuse "${word}" inside the definition.
+- "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
 - "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "${word}" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "${word}" and that existing word together. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
 
@@ -97,33 +98,33 @@ Rules:
 const PALETTE = ["#8CA9C9", "#D98C5F", "#C98CC9", "#A9B16B", "#4FAE82", "#C9A15A", "#7BA9A0"];
 
 const SEED_NODES = {
-  study:    { def: "to spend time learning about something", cat: "school" },
-  math:     { def: "the subject that deals with numbers and shapes", cat: "school" },
-  exam:     { def: "a formal test of what you know", cat: "school" },
-  school:   { def: "a place where people go to learn", cat: "school" },
-  teacher:  { def: "a person whose job is to help others learn", cat: "school" },
-  notebook: { def: "a small book used for writing notes", cat: "school" },
+  study:    { def: "to spend time learning about something", defEs: "pasar tiempo aprendiendo algo", cat: "school" },
+  math:     { def: "the subject that deals with numbers and shapes", defEs: "la materia que trata con números y formas", cat: "school" },
+  exam:     { def: "a formal test of what you know", defEs: "una prueba formal de lo que sabés", cat: "school" },
+  school:   { def: "a place where people go to learn", defEs: "un lugar donde la gente va a aprender", cat: "school" },
+  teacher:  { def: "a person whose job is to help others learn", defEs: "una persona cuyo trabajo es ayudar a otros a aprender", cat: "school" },
+  notebook: { def: "a small book used for writing notes", defEs: "un cuaderno pequeño para escribir apuntes", cat: "school" },
 
-  kitchen:  { def: "a room where food is cooked", cat: "food" },
-  recipe:   { def: "a set of steps for making a certain food", cat: "food" },
-  flavor:   { def: "how food or drink tastes", cat: "food" },
-  hungry:   { def: "feeling like you need to eat", cat: "food" },
+  kitchen:  { def: "a room where food is cooked", defEs: "una habitación donde se cocina comida", cat: "food" },
+  recipe:   { def: "a set of steps for making a certain food", defEs: "un conjunto de pasos para preparar cierta comida", cat: "food" },
+  flavor:   { def: "how food or drink tastes", defEs: "cómo sabe una comida o bebida", cat: "food" },
+  hungry:   { def: "feeling like you need to eat", defEs: "sentir que necesitás comer", cat: "food" },
 
-  happy:    { def: "feeling good or pleased", cat: "feelings" },
-  excited:  { def: "feeling very happy about something coming soon", cat: "feelings" },
-  stress:   { def: "a feeling of worry or pressure", cat: "feelings" },
-  calm:     { def: "quiet and free of worry", cat: "feelings" },
-  proud:    { def: "feeling good about something you did", cat: "feelings" },
+  happy:    { def: "feeling good or pleased", defEs: "sentirse bien o contento", cat: "feelings" },
+  excited:  { def: "feeling very happy about something coming soon", defEs: "sentirse muy feliz por algo que va a pasar pronto", cat: "feelings" },
+  stress:   { def: "a feeling of worry or pressure", defEs: "una sensación de preocupación o presión", cat: "feelings" },
+  calm:     { def: "quiet and free of worry", defEs: "tranquilo y sin preocupaciones", cat: "feelings" },
+  proud:    { def: "feeling good about something you did", defEs: "sentirse bien por algo que hiciste", cat: "feelings" },
 
-  meeting:  { def: "a time when people gather to talk about work", cat: "work" },
-  deadline: { def: "the time by which something must be finished", cat: "work" },
-  coworker: { def: "a person you work with", cat: "work" },
-  salary:   { def: "the money a person earns from a job", cat: "work" },
+  meeting:  { def: "a time when people gather to talk about work", defEs: "un momento en que la gente se reúne para hablar de trabajo", cat: "work" },
+  deadline: { def: "the time by which something must be finished", defEs: "el momento límite en que algo debe estar terminado", cat: "work" },
+  coworker: { def: "a person you work with", defEs: "una persona con la que trabajás", cat: "work" },
+  salary:   { def: "the money a person earns from a job", defEs: "el dinero que una persona gana en un trabajo", cat: "work" },
 
-  tree:     { def: "a tall plant with a trunk and branches", cat: "nature" },
-  forest:   { def: "a large area covered with trees", cat: "nature" },
-  river:    { def: "a long body of water that flows across land", cat: "nature" },
-  root:     { def: "the part of a plant that grows under the ground", cat: "nature" },
+  tree:     { def: "a tall plant with a trunk and branches", defEs: "una planta alta con tronco y ramas", cat: "nature" },
+  forest:   { def: "a large area covered with trees", defEs: "un área grande cubierta de árboles", cat: "nature" },
+  river:    { def: "a long body of water that flows across land", defEs: "una extensión larga de agua que fluye por la tierra", cat: "nature" },
+  root:     { def: "the part of a plant that grows under the ground", defEs: "la parte de una planta que crece bajo tierra", cat: "nature" },
 };
 
 const SEED_EDGES = [
@@ -203,17 +204,140 @@ Rules:
   return JSON.parse(clean);
 }
 
+async function checkConnectionSentence(word, connectedWord, sentence) {
+  const prompt = `A beginner English learner is trying to unlock the new word "${word}" by connecting it to a word they already know: "${connectedWord}".
+They wrote this sentence, trying to use both words naturally together:
+"${sentence}"
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"usesBoth": true or false, "correct": true or false, "corrected": "...", "note": "..."}
+
+Rules:
+- "usesBoth": true only if the sentence actually contains both "${word}" and "${connectedWord}" (or a natural form of each, like plurals or verb tenses).
+- "correct": true if the sentence is natural and grammatically fine as written.
+- "corrected": the most natural correct sentence that still uses both words (if it was already correct, repeat it unchanged). If "usesBoth" is false, write a good example sentence using both words instead, so they see what it should look like.
+- "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.`;
+  const clean = await callClaude(prompt, 500);
+  return JSON.parse(clean);
+}
+
 
 const STORAGE_KEY = "vocab-data";
 
 function buildGraphData() {
   const nodes = {};
   Object.entries(SEED_NODES).forEach(([id, n]) => {
-    nodes[id] = { id, en: id, def: n.def, cat: n.cat, images: [], standalone: n.def, userExamples: [] };
+    nodes[id] = { id, en: id, def: n.def, defEs: n.defEs || "", cat: n.cat, images: [], standalone: n.def, userExamples: [] };
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
-  return { nodes, edges, learned: ["study"], srs };
+  return { nodes, edges, learned: ["study"], srs, level: null, onboarded: false };
+}
+
+/* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
+const PLACEMENT_QUIZ = [
+  { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
+  { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
+  { q: "Choose the correct sentence.", options: ["She don't like coffee.", "She doesn't like coffee.", "She not like coffee.", "She isn't like coffee."], correct: 1 },
+  { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
+  { q: "Choose the correct sentence.", options: ["If I would have known, I would have called.", "If I had known, I would have called.", "If I knew, I would have called.", "If I have known, I would call."], correct: 1 },
+  { q: "The company's profits have ___ significantly this year.", options: ["rose", "raised", "risen", "rising"], correct: 2 },
+];
+
+function levelFromScore(score) {
+  if (score <= 2) return "beginner";
+  if (score <= 4) return "intermediate";
+  return "advanced";
+}
+
+function Onboarding({ onFinish }) {
+  const [step, setStep] = useState("self"); // "self" | "quiz" | "result"
+  const [selfReport, setSelfReport] = useState(null);
+  const [quizIdx, setQuizIdx] = useState(0);
+  const [score, setScore] = useState(0);
+  const [picked, setPicked] = useState(null);
+  const [finalLevel, setFinalLevel] = useState(null);
+
+  const answer = (i) => {
+    setPicked(i);
+    setTimeout(() => {
+      const correct = i === PLACEMENT_QUIZ[quizIdx].correct;
+      const newScore = score + (correct ? 1 : 0);
+      setScore(newScore);
+      setPicked(null);
+      if (quizIdx + 1 >= PLACEMENT_QUIZ.length) {
+        setFinalLevel(levelFromScore(newScore));
+        setStep("result");
+      } else {
+        setQuizIdx(quizIdx + 1);
+      }
+    }, 350);
+  };
+
+  return (
+    <div style={styles.app}>
+      <div style={styles.onboardWrap}>
+        <Sprout size={30} color="#6FBF8B" strokeWidth={1.4} />
+        <h1 style={styles.title}>Roots</h1>
+
+        {step === "self" && (
+          <>
+            <p style={styles.sectionBody}>How would you describe your English level right now?</p>
+            {["beginner", "intermediate", "advanced"].map((lvl) => (
+              <button key={lvl} style={styles.onboardOption} onClick={() => { setSelfReport(lvl); setStep("quiz"); }}>
+                {lvl === "beginner" ? "Beginner — just starting out" : lvl === "intermediate" ? "Intermediate — I get by" : "Advanced — pretty comfortable"}
+              </button>
+            ))}
+          </>
+        )}
+
+        {step === "quiz" && (
+          <>
+            <p style={styles.formHint}>Quick check — question {quizIdx + 1} of {PLACEMENT_QUIZ.length}</p>
+            <p style={styles.sectionBody}>{PLACEMENT_QUIZ[quizIdx].q}</p>
+            {PLACEMENT_QUIZ[quizIdx].options.map((opt, i) => (
+              <button
+                key={i}
+                style={picked === i ? styles.onboardOptionPicked : styles.onboardOption}
+                onClick={() => picked === null && answer(i)}
+              >
+                {opt}
+              </button>
+            ))}
+          </>
+        )}
+
+        {step === "result" && (
+          <>
+            <p style={styles.sectionBody}>
+              Based on the quiz, you're at <b>{finalLevel}</b>
+              {selfReport && selfReport !== finalLevel ? ` (you guessed ${selfReport} — close enough!)` : ""}.
+            </p>
+            <p style={styles.formHint}>
+              {finalLevel === "beginner"
+                ? "Spanish translations will show by default — you can turn them off anytime."
+                : finalLevel === "intermediate"
+                ? "Translations will be hidden but one tap away when you need them."
+                : "The app will stay 100% English — no translations shown."}
+            </p>
+            <label style={styles.label}>Not right? Pick your level manually:</label>
+            {["beginner", "intermediate", "advanced"].map((lvl) => (
+              <button
+                key={lvl}
+                style={finalLevel === lvl ? styles.onboardOptionPicked : styles.onboardOption}
+                onClick={() => setFinalLevel(lvl)}
+              >
+                {lvl}
+              </button>
+            ))}
+            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel)}>
+              Start learning <ChevronRight size={16} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ---------- Component ---------- */
@@ -226,7 +350,7 @@ export default function VocabGraph() {
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
-  const [form, setForm] = useState({ word: "", def: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+  const [form, setForm] = useState({ word: "", def: "", defEs: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
   const [manualLink, setManualLink] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
@@ -236,14 +360,18 @@ export default function VocabGraph() {
   const [reviewActive, setReviewActive] = useState(false);
   const [reviewQueue, setReviewQueue] = useState([]);
   const [reviewPos, setReviewPos] = useState(0);
-  const [revealed, setRevealed] = useState(false);
+  const [reviewSentence, setReviewSentence] = useState("");
+  const [reviewChecking, setReviewChecking] = useState(false);
+  const [reviewCheckResult, setReviewCheckResult] = useState(null);
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   useEffect(() => {
     setSentenceInput("");
     setCheckResult(null);
     setExampleIdx(0);
     setSavedExample(false);
+    setShowTranslation(false);
   }, [selected]);
   const svgRef = useRef(null);
   const simRef = useRef(null);
@@ -360,8 +488,11 @@ export default function VocabGraph() {
       setReviewActive(false);
     } else {
       setReviewPos(next);
-      setRevealed(false);
       setExampleIdx(0);
+      setReviewSentence("");
+      setReviewChecking(false);
+      setReviewCheckResult(null);
+      setShowTranslation(false);
     }
   };
 
@@ -493,6 +624,7 @@ export default function VocabGraph() {
           id,
           en: form.word.trim(),
           def: form.def.trim(),
+          defEs: form.defEs.trim(),
           cat: form.cat.trim() || "custom",
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
@@ -504,7 +636,7 @@ export default function VocabGraph() {
         .map((c) => ({ source: id, target: c.targetId, sentence: c.sentence }));
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
-    setForm({ word: "", def: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+    setForm({ word: "", def: "", defEs: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
     setManualLink("");
     setActiveTab("map");
   };
@@ -530,6 +662,7 @@ export default function VocabGraph() {
       setForm((f) => ({
         ...f,
         def: details.definition || f.def,
+        defEs: details.definitionEs || f.defEs,
         cat: details.category || f.cat,
         connections,
         sentence: connections[0]?.sentence || f.sentence,
@@ -566,6 +699,14 @@ export default function VocabGraph() {
 
   if (!data) return <div style={styles.app} />;
 
+  if (!data.onboarded) {
+    return (
+      <Onboarding
+        onFinish={(level) => setData((prev) => ({ ...prev, level, onboarded: true }))}
+      />
+    );
+  }
+
   const nodeData = simRef.current?.nodeData || [];
   const linkData = simRef.current?.linkData || [];
   const learnedCount = learnedSet.size;
@@ -590,6 +731,15 @@ export default function VocabGraph() {
         <div style={styles.progress}>
           <span style={styles.progressNum}>{learnedCount}</span>
           <span style={styles.progressDen}> / {totalCount} learned</span>
+          <select
+            style={styles.levelSelect}
+            value={data.level || "advanced"}
+            onChange={(e) => setData((prev) => ({ ...prev, level: e.target.value }))}
+          >
+            <option value="beginner">Beginner</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
         </div>
       </header>
 
@@ -699,8 +849,9 @@ export default function VocabGraph() {
             <>
               <h2 style={styles.sectionTitle}>Spaced repetition</h2>
               <p style={styles.sectionBody}>
-                Every learned word gets scheduled like Anki: grade yourself after each card, and words you find
-                easy come back less often while words you struggle with come back sooner.
+                Scheduled like Anki, but active: each card shows the word with its image and definition, then you
+                write your own sentence with it. Once it's checked, grade yourself — words you find easy come back
+                less often, words you struggle with come back sooner.
               </p>
               {learnedCount === 0 ? (
                 <p style={styles.formHint}>Learn a word on the Map first — then it shows up here.</p>
@@ -712,7 +863,10 @@ export default function VocabGraph() {
                     onClick={() => {
                       setReviewQueue(reviewQueueIds);
                       setReviewPos(0);
-                      setRevealed(false);
+                      setExampleIdx(0);
+                      setReviewSentence("");
+                      setReviewChecking(false);
+                      setReviewCheckResult(null);
                       setReviewActive(true);
                     }}
                   >
@@ -725,47 +879,90 @@ export default function VocabGraph() {
             const id = reviewQueue[reviewPos];
             const w = data.nodes[id];
             if (!w) return null;
+            const revExamples = allExamplesFor(w.id);
+            const ex = revExamples[Math.min(exampleIdx, revExamples.length - 1)];
             return (
               <>
                 <p style={styles.formHint}>Card {reviewPos + 1} of {reviewQueue.length}</p>
                 <h2 style={styles.panelWord}>{w.en}</h2>
-                {!revealed ? (
-                  <button style={styles.learnBtn} onClick={() => setRevealed(true)}>
-                    Show answer <ChevronRight size={16} />
+
+                {w.images && w.images.length > 0 ? (
+                  <div style={styles.gallery}>
+                    {w.images.map((src, i) => <img key={i} src={src} alt={w.en} style={styles.galleryImg} />)}
+                  </div>
+                ) : (
+                  <div style={styles.panelImgFallback}><CategoryIcon cat={w.cat} /></div>
+                )}
+                <p style={styles.panelDef}>{w.def}</p>
+                {w.defEs && data.level === "beginner" && (
+                  <p style={styles.translationText}>{w.defEs}</p>
+                )}
+                {w.defEs && data.level === "intermediate" && (
+                  showTranslation ? (
+                    <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
+                  ) : (
+                    <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
+                  )
+                )}
+
+                <label style={styles.label}>Write a sentence with "{w.en}" to complete this card</label>
+                <input
+                  style={styles.input}
+                  value={reviewSentence}
+                  onChange={(e) => { setReviewSentence(e.target.value); setReviewCheckResult(null); }}
+                  placeholder={`e.g. I ${w.en} ...`}
+                  disabled={!!reviewCheckResult}
+                />
+
+                {!reviewCheckResult ? (
+                  <button
+                    style={styles.genBtn}
+                    disabled={!reviewSentence.trim() || reviewChecking}
+                    onClick={async () => {
+                      setReviewChecking(true);
+                      try {
+                        const result = await checkSentence(w.en, reviewSentence.trim());
+                        setReviewCheckResult(result);
+                        addUserExample(w.id, result.correct ? reviewSentence.trim() : result.corrected);
+                      } catch (e) {
+                        setReviewCheckResult({ correct: false, corrected: "", note: `Couldn't check that: ${e.message || e}` });
+                      }
+                      setReviewChecking(false);
+                    }}
+                  >
+                    {reviewChecking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                    {reviewChecking ? "Checking…" : "Check & continue"}
                   </button>
                 ) : (
-                  <>
-                    {w.images && w.images.length > 0 ? (
-                      <div style={styles.gallery}>
-                        {w.images.map((src, i) => <img key={i} src={src} alt={w.en} style={styles.galleryImg} />)}
-                      </div>
+                  <div style={styles.exampleBox}>
+                    {reviewCheckResult.correct ? (
+                      <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ Correct as written!</p>
                     ) : (
-                      <div style={styles.panelImgFallback}><CategoryIcon cat={w.cat} /></div>
+                      <p style={styles.exampleEn}>{reviewCheckResult.corrected}</p>
                     )}
-                    <p style={styles.panelDef}>{w.def}</p>
-                    {(() => {
-                      const revExamples = allExamplesFor(w.id);
-                      const ex = revExamples[Math.min(exampleIdx, revExamples.length - 1)];
-                      return (
-                        <div style={styles.exampleBox}>
-                          <p style={styles.exampleEn}>{ex.sentence}</p>
-                          <div style={styles.exampleFooter}>
-                            {ex.mine ? (
-                              <p style={styles.mineNote}>✎ your example</p>
-                            ) : ex.other ? (
-                              <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
-                            ) : <span />}
-                            {revExamples.length > 1 && (
-                              <div style={styles.examplePager}>
-                                <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + revExamples.length) % revExamples.length)}>‹</button>
-                                <span style={styles.pagerCount}>{exampleIdx + 1}/{revExamples.length}</span>
-                                <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % revExamples.length)}>›</button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
+                    <p style={styles.bridgeNote}>{reviewCheckResult.note}</p>
+                  </div>
+                )}
+                {reviewChecking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+
+                <div style={styles.exampleFooter}>
+                  {ex.mine ? (
+                    <p style={styles.mineNote}>✎ your example</p>
+                  ) : ex.other ? (
+                    <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
+                  ) : <span />}
+                  {revExamples.length > 1 && (
+                    <div style={styles.examplePager}>
+                      <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + revExamples.length) % revExamples.length)}>‹</button>
+                      <span style={styles.pagerCount}>{exampleIdx + 1}/{revExamples.length}</span>
+                      <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % revExamples.length)}>›</button>
+                    </div>
+                  )}
+                </div>
+                <p style={styles.exampleEn}>{ex.sentence}</p>
+
+                {reviewCheckResult && (
+                  <>
                     <p style={styles.formHint}>How well did you remember it?</p>
                     <div style={styles.gradeRow}>
                       <button style={styles.gradeAgain} onClick={() => { gradeReview(id, "again"); nextReviewCard(); }}>Again</button>
@@ -909,6 +1106,16 @@ export default function VocabGraph() {
               </span>
               <h2 style={styles.panelWord}>{w.en}</h2>
               <p style={styles.panelDef}>{w.def}</p>
+              {w.defEs && data.level === "beginner" && (
+                <p style={styles.translationText}>{w.defEs}</p>
+              )}
+              {w.defEs && data.level === "intermediate" && (
+                showTranslation ? (
+                  <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
+                ) : (
+                  <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
+                )
+              )}
               {(() => {
                 const ex = examples[Math.min(exampleIdx, examples.length - 1)];
                 return (
@@ -932,65 +1139,123 @@ export default function VocabGraph() {
                 );
               })()}
               {st === "learned" ? (
-                <div style={styles.learnedTag}>
-                  <Check size={16} color="#6FBF8B" /> Already learned
-                </div>
-              ) : (
-                <button style={styles.learnBtn} onClick={() => markLearned(w.id)}>
-                  Mark as learned <ChevronRight size={16} />
-                </button>
-              )}
+                <>
+                  <div style={styles.learnedTag}>
+                    <Check size={16} color="#6FBF8B" /> Already learned
+                  </div>
 
-              <label style={styles.label}>Try it — write your own sentence with "{w.en}"</label>
-              <input
-                style={styles.input}
-                value={sentenceInput}
-                onChange={(e) => { setSentenceInput(e.target.value); setCheckResult(null); setSavedExample(false); }}
-                placeholder={`e.g. I ${w.en} ...`}
-              />
-              <button
-                style={styles.genBtn}
-                disabled={!sentenceInput.trim() || checking}
-                onClick={async () => {
-                  setChecking(true);
-                  try {
-                    const result = await checkSentence(w.en, sentenceInput.trim());
-                    setCheckResult(result);
-                  } catch (e) {
-                    setCheckResult({ correct: false, corrected: "", note: `Couldn't check that: ${e.message || e}` });
-                  }
-                  setChecking(false);
-                }}
-              >
-                {checking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-                {checking ? "Checking…" : "Check my sentence"}
-              </button>
-              {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
-              {checkResult && (
-                <div style={styles.exampleBox}>
-                  {checkResult.correct ? (
-                    <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ Correct as written!</p>
-                  ) : (
-                    <p style={styles.exampleEn}>{checkResult.corrected}</p>
+                  <label style={styles.label}>Try it — write your own sentence with "{w.en}"</label>
+                  <input
+                    style={styles.input}
+                    value={sentenceInput}
+                    onChange={(e) => { setSentenceInput(e.target.value); setCheckResult(null); setSavedExample(false); }}
+                    placeholder={`e.g. I ${w.en} ...`}
+                  />
+                  <button
+                    style={styles.genBtn}
+                    disabled={!sentenceInput.trim() || checking}
+                    onClick={async () => {
+                      setChecking(true);
+                      try {
+                        const result = await checkSentence(w.en, sentenceInput.trim());
+                        setCheckResult(result);
+                      } catch (e) {
+                        setCheckResult({ correct: false, corrected: "", note: `Couldn't check that: ${e.message || e}` });
+                      }
+                      setChecking(false);
+                    }}
+                  >
+                    {checking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                    {checking ? "Checking…" : "Check my sentence"}
+                  </button>
+                  {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+                  {checkResult && (
+                    <div style={styles.exampleBox}>
+                      {checkResult.correct ? (
+                        <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ Correct as written!</p>
+                      ) : (
+                        <p style={styles.exampleEn}>{checkResult.corrected}</p>
+                      )}
+                      <p style={styles.bridgeNote}>{checkResult.note}</p>
+                      {checkResult.corrected !== undefined && checkResult.note && !checkResult.note.startsWith("Couldn't check") && (
+                        savedExample ? (
+                          <p style={styles.mineNote}>✓ Added to your examples</p>
+                        ) : (
+                          <button
+                            style={styles.smallAddBtn2}
+                            onClick={() => {
+                              addUserExample(w.id, checkResult.correct ? sentenceInput.trim() : checkResult.corrected);
+                              setSavedExample(true);
+                            }}
+                          >
+                            <Plus size={13} /> Add to my examples
+                          </button>
+                        )
+                      )}
+                    </div>
                   )}
-                  <p style={styles.bridgeNote}>{checkResult.note}</p>
-                  {checkResult.corrected !== undefined && checkResult.note && !checkResult.note.startsWith("Couldn't check") && (
-                    savedExample ? (
-                      <p style={styles.mineNote}>✓ Added to your examples</p>
-                    ) : (
+                </>
+              ) : (() => {
+                const learnedBridge = bridgesFor(w.id).find((b) => learnedSet.has(b.other));
+                const connectedWord = learnedBridge ? data.nodes[learnedBridge.other]?.en : null;
+                return (
+                  <>
+                    <label style={styles.label}>
+                      {connectedWord
+                        ? `Unlock it — write a sentence using both "${w.en}" and "${connectedWord}"`
+                        : `Unlock it — write a sentence using "${w.en}"`}
+                    </label>
+                    <input
+                      style={styles.input}
+                      value={sentenceInput}
+                      onChange={(e) => { setSentenceInput(e.target.value); setCheckResult(null); }}
+                      placeholder={connectedWord ? `e.g. I ${w.en} ... ${connectedWord} ...` : `e.g. I ${w.en} ...`}
+                      disabled={!!checkResult}
+                    />
+                    {!checkResult ? (
                       <button
-                        style={styles.smallAddBtn2}
-                        onClick={() => {
-                          addUserExample(w.id, checkResult.correct ? sentenceInput.trim() : checkResult.corrected);
-                          setSavedExample(true);
+                        style={styles.genBtn}
+                        disabled={!sentenceInput.trim() || checking}
+                        onClick={async () => {
+                          setChecking(true);
+                          try {
+                            const result = connectedWord
+                              ? await checkConnectionSentence(w.en, connectedWord, sentenceInput.trim())
+                              : await checkSentence(w.en, sentenceInput.trim());
+                            setCheckResult(result);
+                            addUserExample(w.id, result.correct ? sentenceInput.trim() : result.corrected);
+                          } catch (e) {
+                            setCheckResult({ correct: false, corrected: "", note: `Couldn't check that: ${e.message || e}` });
+                          }
+                          setChecking(false);
                         }}
                       >
-                        <Plus size={13} /> Add to my examples
+                        {checking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                        {checking ? "Checking…" : "Check my sentence"}
                       </button>
-                    )
-                  )}
-                </div>
-              )}
+                    ) : (
+                      <div style={styles.exampleBox}>
+                        {connectedWord && checkResult.usesBoth === false && (
+                          <p style={styles.genError}>Try to include "{connectedWord}" too — here's an example:</p>
+                        )}
+                        {checkResult.correct ? (
+                          <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ Correct as written!</p>
+                        ) : (
+                          <p style={styles.exampleEn}>{checkResult.corrected}</p>
+                        )}
+                        <p style={styles.bridgeNote}>{checkResult.note}</p>
+                      </div>
+                    )}
+                    {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+
+                    {checkResult && (
+                      <button style={styles.learnBtn} onClick={() => markLearned(w.id)}>
+                        Mark as learned <ChevronRight size={16} />
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         );
@@ -1019,6 +1284,12 @@ const styles = {
   section: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "18px 18px 22px" },
   sectionTitle: { fontSize: 20, margin: "0 0 8px", fontWeight: 600 },
   sectionBody: { fontSize: 13.5, color: "#b7c2be", lineHeight: 1.5, margin: "0 0 16px" },
+  onboardWrap: { maxWidth: 420, margin: "60px auto 0", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+  onboardOption: { width: "100%", textAlign: "left", background: "#1c2530", border: "1px solid #2f3b42", color: "#eae4d8", borderRadius: 10, padding: "13px 16px", fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 10 },
+  onboardOptionPicked: { width: "100%", textAlign: "left", background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 10, padding: "13px 16px", fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 10 },
+  translationText: { fontSize: 13.5, color: "#8cc9d9", fontStyle: "italic", margin: "2px 0 14px", cursor: "pointer" },
+  translateBtn: { background: "none", border: "1px dashed #2f3b42", color: "#8cc9d9", borderRadius: 8, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", margin: "2px 0 14px" },
+  levelSelect: { display: "block", marginTop: 6, background: "#1c2530", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 6, fontSize: 10.5, padding: "3px 5px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   headerLeft: { display: "flex", gap: 10, alignItems: "flex-start" },
   title: { fontSize: 26, margin: 0, fontWeight: 600, letterSpacing: 0.3 },
   subtitle: { margin: "2px 0 0", fontSize: 12.5, color: "#8a9490", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontStyle: "italic" },
