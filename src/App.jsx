@@ -97,13 +97,14 @@ async function generateWordDetails(word, existingWords) {
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
-{"definition": "...", "definitionEs": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
+{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
-- "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words. Do not reuse "${word}" inside the definition.
+- "correctedWord": if "${word}" is misspelled or not a real English word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already spelled correctly, repeat it unchanged.
+- "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). Do not reuse the word inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
-- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "${word}" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "${word}" and that existing word together. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
+- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
 
   const clean = await callClaude(prompt, 1000);
   return JSON.parse(clean);
@@ -401,6 +402,7 @@ export default function VocabGraph() {
   const [reviewSentence, setReviewSentence] = useState("");
   const [reviewChecking, setReviewChecking] = useState(false);
   const [reviewCheckResult, setReviewCheckResult] = useState(null);
+  const [nextReviewInfo, setNextReviewInfo] = useState(null);
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
@@ -517,15 +519,17 @@ export default function VocabGraph() {
   };
 
   const gradeReview = (id, grade) => {
+    const updated = nextSrs(data.srs?.[id] || initSrs(), grade);
     setData((prev) => {
       const today = todayKey();
       const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
       return {
         ...prev,
-        srs: { ...prev.srs, [id]: nextSrs(prev.srs?.[id] || initSrs(), grade) },
+        srs: { ...prev.srs, [id]: updated },
         reviewedToday: { date: today, count: prevCount + 1 },
       };
     });
+    return updated;
   };
 
   const nextReviewCard = () => {
@@ -539,6 +543,7 @@ export default function VocabGraph() {
       setReviewChecking(false);
       setReviewCheckResult(null);
       setShowTranslation(false);
+      setNextReviewInfo(null);
     }
   };
 
@@ -700,23 +705,35 @@ export default function VocabGraph() {
     // 1) definition + connections: required, this is the part that must succeed
     let generatedCategory = form.cat;
     let generatedDefinition = form.def;
+    let generatedWord = form.word.trim();
     try {
       const details = await generateWordDetails(form.word.trim(), existingWords);
       const byName = {};
       existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
+      const spellFixed = details.correctedWord && details.correctedWord.toLowerCase() !== form.word.trim().toLowerCase();
+      // Non-beginners have to write their own connecting sentence — the AI's
+      // suggestion is only pre-checked (and pre-filled) for beginner level,
+      // which still gets that scaffolding.
       const connections = (details.connections || [])
-        .map((c) => ({ targetId: byName[(c.word || "").toLowerCase()], sentence: c.sentence, checked: true }))
+        .map((c) => ({
+          targetId: byName[(c.word || "").toLowerCase()],
+          sentence: data.level === "beginner" ? c.sentence : "",
+          checked: data.level === "beginner",
+        }))
         .filter((c) => c.targetId);
       generatedCategory = details.category || generatedCategory;
       generatedDefinition = details.definition || generatedDefinition;
+      generatedWord = details.correctedWord || generatedWord;
       setForm((f) => ({
         ...f,
+        word: details.correctedWord || f.word,
         def: details.definition || f.def,
         defEs: details.definitionEs || f.defEs,
         cat: details.category || f.cat,
         connections,
         sentence: connections[0]?.sentence || f.sentence,
       }));
+      if (spellFixed) setGenError(`Corrected the spelling to "${details.correctedWord}".`);
     } catch (e) {
       setGenError(`Couldn't generate: ${e.message || e}`);
       setGenerating(false);
@@ -724,7 +741,7 @@ export default function VocabGraph() {
     }
 
     // 2) images: real search now works (this is a real server, not a sandboxed artifact)
-    const images = await findImages(form.word.trim(), generatedCategory, generatedDefinition);
+    const images = await findImages(generatedWord, generatedCategory, generatedDefinition);
     setForm((f) => ({ ...f, images }));
     setGenerating(false);
   };
@@ -924,6 +941,7 @@ export default function VocabGraph() {
                       setReviewSentence("");
                       setReviewChecking(false);
                       setReviewCheckResult(null);
+                      setNextReviewInfo(null);
                       setReviewActive(true);
                     }}
                   >
@@ -944,6 +962,7 @@ export default function VocabGraph() {
                       setReviewSentence("");
                       setReviewChecking(false);
                       setReviewCheckResult(null);
+                      setNextReviewInfo(null);
                       setReviewActive(true);
                     }}
                   >
@@ -1042,16 +1061,26 @@ export default function VocabGraph() {
                   </>
                 )}
 
-                {reviewCheckResult && (
+                {reviewCheckResult && !nextReviewInfo && (
                   <>
                     <p style={styles.formHint}>How well did you remember it?</p>
                     <div style={styles.gradeRow}>
-                      <button style={styles.gradeAgain} onClick={() => { gradeReview(id, "again"); nextReviewCard(); }}>Again</button>
-                      <button style={styles.gradeHard} onClick={() => { gradeReview(id, "hard"); nextReviewCard(); }}>Hard</button>
-                      <button style={styles.gradeGood} onClick={() => { gradeReview(id, "good"); nextReviewCard(); }}>Good</button>
-                      <button style={styles.gradeEasy} onClick={() => { gradeReview(id, "easy"); nextReviewCard(); }}>Easy</button>
+                      <button style={styles.gradeAgain} onClick={() => setNextReviewInfo(gradeReview(id, "again"))}>Again</button>
+                      <button style={styles.gradeHard} onClick={() => setNextReviewInfo(gradeReview(id, "hard"))}>Hard</button>
+                      <button style={styles.gradeGood} onClick={() => setNextReviewInfo(gradeReview(id, "good"))}>Good</button>
+                      <button style={styles.gradeEasy} onClick={() => setNextReviewInfo(gradeReview(id, "easy"))}>Easy</button>
                     </div>
                   </>
+                )}
+                {nextReviewInfo && (
+                  <div style={styles.exampleBox}>
+                    <p style={styles.mineNote}>
+                      Next review in {Math.round(nextReviewInfo.interval) <= 0 ? "less than a day" : `${Math.round(nextReviewInfo.interval)} day${Math.round(nextReviewInfo.interval) === 1 ? "" : "s"}`}
+                    </p>
+                    <button style={styles.learnBtn} onClick={nextReviewCard}>
+                      Continue <ChevronRight size={16} />
+                    </button>
+                  </div>
                 )}
               </>
             );
