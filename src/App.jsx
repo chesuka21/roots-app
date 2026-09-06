@@ -235,19 +235,33 @@ function buildGraphData() {
 }
 
 /* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
-const PLACEMENT_QUIZ = [
-  { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
-  { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
-  { q: "Choose the correct sentence.", options: ["She don't like coffee.", "She doesn't like coffee.", "She not like coffee.", "She isn't like coffee."], correct: 1 },
-  { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
-  { q: "Choose the correct sentence.", options: ["If I would have known, I would have called.", "If I had known, I would have called.", "If I knew, I would have called.", "If I have known, I would call."], correct: 1 },
-  { q: "The company's profits have ___ significantly this year.", options: ["rose", "raised", "risen", "rising"], correct: 2 },
-];
+/* Each tier has 3 questions matched to that tier's difficulty. The tier shown
+   is picked from the self-report; the score within it can then nudge the
+   final level up or down by one step. */
+const QUIZ_TIERS = {
+  beginner: [
+    { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
+    { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
+    { q: "Choose the correct sentence.", options: ["She don't like coffee.", "She doesn't like coffee.", "She not like coffee.", "She isn't like coffee."], correct: 1 },
+  ],
+  intermediate: [
+    { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
+    { q: "Choose the correct sentence.", options: ["I have been living here since 3 years.", "I have been living here for 3 years.", "I am living here since 3 years.", "I live here since 3 years."], correct: 1 },
+    { q: "By the time we arrived, the movie ___.", options: ["already started", "has already started", "had already started", "was already starting"], correct: 2 },
+  ],
+  advanced: [
+    { q: "Choose the correct sentence.", options: ["If I would have known, I would have called.", "If I had known, I would have called.", "If I knew, I would have called.", "If I have known, I would call."], correct: 1 },
+    { q: "The company's profits have ___ significantly this year.", options: ["rose", "raised", "risen", "rising"], correct: 2 },
+    { q: "Choose the sentence with correct usage.", options: ["I wish I would have more time.", "I wish I had more time.", "I wish I have more time.", "I wish I would had more time."], correct: 1 },
+  ],
+};
+const TIER_ORDER = ["beginner", "intermediate", "advanced"];
 
-function levelFromScore(score) {
-  if (score <= 2) return "beginner";
-  if (score <= 4) return "intermediate";
-  return "advanced";
+function adjustedLevel(startLevel, score) {
+  const idx = TIER_ORDER.indexOf(startLevel);
+  if (score <= 1) return TIER_ORDER[Math.max(0, idx - 1)]; // struggled — one step down
+  if (score === 3) return TIER_ORDER[Math.min(TIER_ORDER.length - 1, idx + 1)]; // aced it — one step up
+  return startLevel; // 2/3 — about right
 }
 
 function Onboarding({ onFinish }) {
@@ -257,16 +271,17 @@ function Onboarding({ onFinish }) {
   const [score, setScore] = useState(0);
   const [picked, setPicked] = useState(null);
   const [finalLevel, setFinalLevel] = useState(null);
+  const quizSet = selfReport ? QUIZ_TIERS[selfReport] : [];
 
   const answer = (i) => {
     setPicked(i);
     setTimeout(() => {
-      const correct = i === PLACEMENT_QUIZ[quizIdx].correct;
+      const correct = i === quizSet[quizIdx].correct;
       const newScore = score + (correct ? 1 : 0);
       setScore(newScore);
       setPicked(null);
-      if (quizIdx + 1 >= PLACEMENT_QUIZ.length) {
-        setFinalLevel(levelFromScore(newScore));
+      if (quizIdx + 1 >= quizSet.length) {
+        setFinalLevel(adjustedLevel(selfReport, newScore));
         setStep("result");
       } else {
         setQuizIdx(quizIdx + 1);
@@ -293,9 +308,9 @@ function Onboarding({ onFinish }) {
 
         {step === "quiz" && (
           <>
-            <p style={styles.formHint}>Quick check — question {quizIdx + 1} of {PLACEMENT_QUIZ.length}</p>
-            <p style={styles.sectionBody}>{PLACEMENT_QUIZ[quizIdx].q}</p>
-            {PLACEMENT_QUIZ[quizIdx].options.map((opt, i) => (
+            <p style={styles.formHint}>Quick check ({selfReport} level) — question {quizIdx + 1} of {quizSet.length}</p>
+            <p style={styles.sectionBody}>{quizSet[quizIdx].q}</p>
+            {quizSet[quizIdx].options.map((opt, i) => (
               <button
                 key={i}
                 style={picked === i ? styles.onboardOptionPicked : styles.onboardOption}
@@ -311,7 +326,7 @@ function Onboarding({ onFinish }) {
           <>
             <p style={styles.sectionBody}>
               Based on the quiz, you're at <b>{finalLevel}</b>
-              {selfReport && selfReport !== finalLevel ? ` (you guessed ${selfReport} — close enough!)` : ""}.
+              {selfReport && selfReport !== finalLevel ? ` (adjusted from your guess of ${selfReport}).` : "."}
             </p>
             <p style={styles.formHint}>
               {finalLevel === "beginner"
@@ -509,7 +524,11 @@ export default function VocabGraph() {
     const node = data?.nodes?.[id];
     const mine = (node?.userExamples || []).map((s) => ({ sentence: s, other: null, mine: true }));
     const system = bridgesFor(id);
-    const combined = [...mine, ...system];
+    // Beginners get every pre-written connecting sentence as scaffolding;
+    // intermediate/advanced only get ONE as a reference — the rest has to
+    // come from the learner's own writing.
+    const systemLimited = data?.level === "beginner" ? system : system.slice(0, 1);
+    const combined = [...mine, ...systemLimited];
     return combined.length ? combined : [{ sentence: node?.standalone, other: null }];
   };
 
@@ -945,21 +964,25 @@ export default function VocabGraph() {
                 )}
                 {reviewChecking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
 
-                <div style={styles.exampleFooter}>
-                  {ex.mine ? (
-                    <p style={styles.mineNote}>✎ your example</p>
-                  ) : ex.other ? (
-                    <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
-                  ) : <span />}
-                  {revExamples.length > 1 && (
-                    <div style={styles.examplePager}>
-                      <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + revExamples.length) % revExamples.length)}>‹</button>
-                      <span style={styles.pagerCount}>{exampleIdx + 1}/{revExamples.length}</span>
-                      <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % revExamples.length)}>›</button>
+                {(data.level === "beginner" || reviewCheckResult) && (
+                  <>
+                    <div style={styles.exampleFooter}>
+                      {ex.mine ? (
+                        <p style={styles.mineNote}>✎ your example</p>
+                      ) : ex.other ? (
+                        <p style={styles.bridgeNote}>connects to “{data.nodes[ex.other]?.en || ex.other}”</p>
+                      ) : <span />}
+                      {revExamples.length > 1 && (
+                        <div style={styles.examplePager}>
+                          <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i - 1 + revExamples.length) % revExamples.length)}>‹</button>
+                          <span style={styles.pagerCount}>{exampleIdx + 1}/{revExamples.length}</span>
+                          <button style={styles.pagerBtn} onClick={() => setExampleIdx((i) => (i + 1) % revExamples.length)}>›</button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <p style={styles.exampleEn}>{ex.sentence}</p>
+                    <p style={styles.exampleEn}>{ex.sentence}</p>
+                  </>
+                )}
 
                 {reviewCheckResult && (
                   <>
