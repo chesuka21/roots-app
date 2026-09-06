@@ -75,6 +75,22 @@ async function findImages(word, category, definition) {
   }
 }
 
+async function findWordForDescription(description) {
+  const prompt = `Someone learning English is trying to remember or find an English word. They described it like this (they may write in Spanish or English):
+"${description}"
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"words": [{"word": "...", "why": "..."}]}
+
+Rules:
+- "words": 1 to 3 candidate English words or short phrases that match the description, best match first.
+- "word": the English word itself, lowercase, no article (write "niece", not "a niece").
+- "why": a very short reason it fits, under 12 words, in English.
+- If the description is already very specific, just return one strong match.`;
+  const clean = await callClaude(prompt, 400);
+  return JSON.parse(clean);
+}
+
 async function generateWordDetails(word, existingWords) {
   const wordList = existingWords.map((w) => w.en).join(", ");
   const prompt = `New word: "${word}"
@@ -170,6 +186,10 @@ function CategoryIcon({ cat, size = 30, color = "#4a5763" }) {
 
 /* ---------- Simple SM-2-style spaced repetition (same idea Anki uses) ---------- */
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DAILY_REVIEW_CAP = 20; // like Anki's daily limit — keeps a big backlog from turning into 100 cards in one sitting
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
 function initSrs() {
   return { interval: 1, ease: 2.5, reps: 0, due: Date.now() + DAY_MS };
 }
@@ -369,6 +389,9 @@ export default function VocabGraph() {
   const [manualLink, setManualLink] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
+  const [lookupText, setLookupText] = useState("");
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupResults, setLookupResults] = useState(null);
   const [sentenceInput, setSentenceInput] = useState("");
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
@@ -494,7 +517,15 @@ export default function VocabGraph() {
   };
 
   const gradeReview = (id, grade) => {
-    setData((prev) => ({ ...prev, srs: { ...prev.srs, [id]: nextSrs(prev.srs?.[id] || initSrs(), grade) } }));
+    setData((prev) => {
+      const today = todayKey();
+      const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
+      return {
+        ...prev,
+        srs: { ...prev.srs, [id]: nextSrs(prev.srs?.[id] || initSrs(), grade) },
+        reviewedToday: { date: today, count: prevCount + 1 },
+      };
+    });
   };
 
   const nextReviewCard = () => {
@@ -733,8 +764,14 @@ export default function VocabGraph() {
   const wordList = Object.values(data.nodes);
   const cats = [...new Set(wordList.map((w) => w.cat))];
 
-  const dueCount = [...learnedSet].filter((id) => (data.srs?.[id]?.due ?? 0) <= Date.now()).length;
-  const reviewQueueIds = [...learnedSet].sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
+  const dueIds = [...learnedSet]
+    .filter((id) => (data.srs?.[id]?.due ?? 0) <= Date.now())
+    .sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
+  const doneToday = data.reviewedToday?.date === todayKey() ? data.reviewedToday.count : 0;
+  const remainingCapToday = Math.max(0, DAILY_REVIEW_CAP - doneToday);
+  const dueCount = dueIds.length;
+  const dueQueueIds = dueIds.slice(0, remainingCapToday);
+  const practiceQueueIds = [...learnedSet].sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
 
   return (
     <div style={styles.app}>
@@ -874,13 +911,14 @@ export default function VocabGraph() {
               </p>
               {learnedCount === 0 ? (
                 <p style={styles.formHint}>Learn a word on the Map first — then it shows up here.</p>
-              ) : (
+              ) : dueCount === 0 ? (
                 <>
-                  <p style={styles.progressNum}>{dueCount > 0 ? `${dueCount} due now` : "Nothing due yet"}</p>
+                  <p style={styles.progressNum}>🎉 All caught up!</p>
+                  <p style={styles.formHint}>Nothing's due today — come back tomorrow, or practice anyway (it won't rush your schedule).</p>
                   <button
-                    style={styles.learnBtn}
+                    style={styles.tab}
                     onClick={() => {
-                      setReviewQueue(reviewQueueIds);
+                      setReviewQueue(practiceQueueIds);
                       setReviewPos(0);
                       setExampleIdx(0);
                       setReviewSentence("");
@@ -889,7 +927,27 @@ export default function VocabGraph() {
                       setReviewActive(true);
                     }}
                   >
-                    <Layers size={16} /> Start review ({learnedCount} word{learnedCount === 1 ? "" : "s"})
+                    Practice anyway ({learnedCount} word{learnedCount === 1 ? "" : "s"})
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p style={styles.progressNum}>
+                    {dueCount} due{remainingCapToday < dueCount ? ` (showing ${remainingCapToday} today, rest carries over)` : ""}
+                  </p>
+                  <button
+                    style={styles.learnBtn}
+                    onClick={() => {
+                      setReviewQueue(dueQueueIds);
+                      setReviewPos(0);
+                      setExampleIdx(0);
+                      setReviewSentence("");
+                      setReviewChecking(false);
+                      setReviewCheckResult(null);
+                      setReviewActive(true);
+                    }}
+                  >
+                    <Layers size={16} /> Start review ({dueQueueIds.length} word{dueQueueIds.length === 1 ? "" : "s"})
                   </button>
                 </>
               )}
@@ -1005,6 +1063,53 @@ export default function VocabGraph() {
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>Add a word</h2>
           <p style={styles.formHint}>Every visitor builds their own map — this word is saved only for you.</p>
+
+          <div style={styles.lookupBox}>
+            <label style={styles.label}>Not sure of the word? Describe it</label>
+            <input
+              style={styles.input}
+              value={lookupText}
+              onChange={(e) => { setLookupText(e.target.value); setLookupResults(null); }}
+              placeholder='e.g. "Cómo se llama la hija de mi hermana"'
+            />
+            <button
+              style={styles.genBtn}
+              disabled={!lookupText.trim() || lookupBusy}
+              onClick={async () => {
+                setLookupBusy(true);
+                setLookupResults(null);
+                try {
+                  const result = await findWordForDescription(lookupText.trim());
+                  setLookupResults(result.words || []);
+                } catch (e) {
+                  setLookupResults([{ word: "", why: `Couldn't look that up: ${e.message || e}` }]);
+                }
+                setLookupBusy(false);
+              }}
+            >
+              {lookupBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+              {lookupBusy ? "Thinking…" : "What's the word?"}
+            </button>
+            {lookupBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+            {lookupResults && lookupResults.map((r, i) => (
+              r.word ? (
+                <button
+                  key={i}
+                  style={styles.lookupResult}
+                  onClick={() => {
+                    setForm((f) => ({ ...f, word: r.word }));
+                    setLookupText("");
+                    setLookupResults(null);
+                  }}
+                >
+                  <span style={styles.lookupWord}>{r.word}</span>
+                  <span style={styles.lookupWhy}>{r.why}</span>
+                </button>
+              ) : (
+                <p key={i} style={styles.genError}>{r.why}</p>
+              )
+            ))}
+          </div>
 
           <label style={styles.label}>Word</label>
           <input style={styles.input} value={form.word} onChange={(e) => setForm({ ...form, word: e.target.value })} placeholder="e.g. deadline" />
@@ -1361,6 +1466,10 @@ const styles = {
   learnedTag: { display: "flex", alignItems: "center", gap: 8, color: "#6FBF8B", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13 },
   learnBtn: { width: "100%", background: "#6FBF8B", color: "#12181b", border: "none", borderRadius: 10, padding: "13px 16px", fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontFamily: "inherit", marginTop: 6 },
   formHint: { fontSize: 12, color: "#71807d", margin: "4px 0 16px" },
+  lookupBox: { background: "#12181b", border: "1px dashed #2f3b42", borderRadius: 10, padding: 14, marginBottom: 20 },
+  lookupResult: { display: "block", width: "100%", textAlign: "left", background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 8, padding: "9px 12px", marginTop: 8, cursor: "pointer", fontFamily: "inherit" },
+  lookupWord: { color: "#eae4d8", fontSize: 15, fontWeight: 600, display: "block" },
+  lookupWhy: { color: "#8a9490", fontSize: 11.5, display: "block", marginTop: 2 },
   genBtn: { width: "100%", background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 10, padding: "11px 14px", fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer", fontFamily: "inherit", marginTop: 14 },
   genError: { fontSize: 12, color: "#d98c8c", margin: "8px 0 0" },
   imgCredit: { fontSize: 10.5, color: "#66746f", margin: "4px 0 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
