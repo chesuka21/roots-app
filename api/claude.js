@@ -86,7 +86,7 @@ const PROVIDERS = [
 // Races all configured providers. The fastest one goes immediately; any
 // others start automatically after `staggerMs` if the first hasn't answered
 // yet, so a slow provider never blocks the others — first success wins.
-function raceProviders(prompt, providers, staggerMs = 5000) {
+function raceProviders(prompt, providers, staggerMs = 2500) {
   return new Promise((resolve, reject) => {
     if (providers.length === 0) {
       reject(new Error("No AI provider is configured (missing GROQ_API_KEY / GEMINI_API_KEY)"));
