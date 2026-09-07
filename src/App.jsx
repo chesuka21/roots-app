@@ -110,6 +110,42 @@ Rules:
   return JSON.parse(clean);
 }
 
+async function explainPhrase(phrase) {
+  const prompt = `An English learner heard or read this phrase somewhere (a movie, a show, a conversation) and doesn't understand it:
+"${phrase}"
+
+Explain what it actually means in everyday use. If it's an idiom or slang, explain the figurative meaning, not a word-for-word breakdown.
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"meaning": "...", "meaningEs": "...", "idiomatic": true or false}
+
+Rules:
+- "meaning": a short, plain English explanation, under 20 words.
+- "meaningEs": the same explanation in natural Spanish, under 20 words.
+- "idiomatic": true if this is a figurative/idiomatic expression, false if it's just a plain literal phrase.`;
+  const clean = await callClaude(prompt, 400);
+  return JSON.parse(clean);
+}
+
+async function suggestWordsForProfile(profile, existingWords) {
+  const existingList = existingWords.map((w) => w.en).join(", ");
+  const context = [profile.job && `works as / studies: ${profile.job}`, profile.interests && `interests: ${profile.interests}`]
+    .filter(Boolean)
+    .join("; ");
+  const prompt = `Suggest useful English vocabulary for a learner with this background: ${context || "no background given"}.
+Words they already have (don't repeat these): ${existingList || "(none yet)"}
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"suggestions": [{"word": "...", "why": "..."}]}
+
+Rules:
+- "suggestions": exactly 5 words relevant to their job/interests, not already in their list.
+- "word": lowercase, single common English word (no phrases).
+- "why": under 10 words, why it's useful for them specifically.`;
+  const clean = await callClaude(prompt, 500);
+  return JSON.parse(clean);
+}
+
 async function generateWordDetails(word, existingWords) {
   const wordList = existingWords.map((w) => w.en).join(", ");
   const prompt = `New word: "${word}"
@@ -271,7 +307,7 @@ function buildGraphData() {
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
-  return { nodes, edges, learned: ["study"], srs, level: null, onboarded: false };
+  return { nodes, edges, learned: ["study"], srs, level: null, profile: null, onboarded: false };
 }
 
 /* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
@@ -305,12 +341,14 @@ function adjustedLevel(startLevel, score) {
 }
 
 function Onboarding({ onFinish }) {
-  const [step, setStep] = useState("self"); // "self" | "quiz" | "result"
+  const [step, setStep] = useState("self"); // "self" | "quiz" | "result" | "profile"
   const [selfReport, setSelfReport] = useState(null);
   const [quizIdx, setQuizIdx] = useState(0);
   const [score, setScore] = useState(0);
   const [picked, setPicked] = useState(null);
   const [finalLevel, setFinalLevel] = useState(null);
+  const [job, setJob] = useState("");
+  const [interests, setInterests] = useState("");
   const quizSet = selfReport ? QUIZ_TIERS[selfReport] : [];
 
   const answer = (i) => {
@@ -385,7 +423,22 @@ function Onboarding({ onFinish }) {
                 {lvl}
               </button>
             ))}
-            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel)}>
+            <button style={styles.learnBtn} onClick={() => setStep("profile")}>
+              Continue <ChevronRight size={16} />
+            </button>
+          </>
+        )}
+
+        {step === "profile" && (
+          <>
+            <p style={styles.sectionBody}>
+              One more thing — this helps tailor word suggestions to you (a chef and a lawyer don't need the same vocabulary). Everything here is optional.
+            </p>
+            <label style={styles.label}>What do you do? (job, field of study, etc.)</label>
+            <input style={styles.input} value={job} onChange={(e) => setJob(e.target.value)} placeholder="e.g. chef, law student, nurse" />
+            <label style={styles.label}>Interests or hobbies</label>
+            <input style={styles.input} value={interests} onChange={(e) => setInterests(e.target.value)} placeholder="e.g. cooking, soccer, video games" />
+            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel, { job: job.trim(), interests: interests.trim() })}>
               Start learning <ChevronRight size={16} />
             </button>
           </>
@@ -412,6 +465,11 @@ export default function VocabGraph() {
   const [lookupText, setLookupText] = useState("");
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupResults, setLookupResults] = useState(null);
+  const [phraseText, setPhraseText] = useState("");
+  const [phraseBusy, setPhraseBusy] = useState(false);
+  const [phraseResult, setPhraseResult] = useState(null);
+  const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestResults, setSuggestResults] = useState(null);
   const [idiomText, setIdiomText] = useState("");
   const [idiomBusy, setIdiomBusy] = useState(false);
   const [idiomResult, setIdiomResult] = useState(null);
@@ -792,7 +850,7 @@ export default function VocabGraph() {
   if (!data.onboarded) {
     return (
       <Onboarding
-        onFinish={(level) => setData((prev) => ({ ...prev, level, onboarded: true }))}
+        onFinish={(level, profile) => setData((prev) => ({ ...prev, level, profile, onboarded: true }))}
       />
     );
   }
@@ -845,6 +903,7 @@ export default function VocabGraph() {
           Review{dueCount > 0 ? ` · ${dueCount}` : ""}
         </button>
         <button style={activeTab === "add" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("add")}>Add word</button>
+        <button style={activeTab === "lookup" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("lookup")}>Lookup</button>
       </div>
 
       {activeTab === "map" && (
@@ -1116,52 +1175,41 @@ export default function VocabGraph() {
           <h2 style={styles.sectionTitle}>Add a word</h2>
           <p style={styles.formHint}>Every visitor builds their own map — this word is saved only for you.</p>
 
-          <div style={styles.lookupBox}>
-            <label style={styles.label}>Not sure of the word? Describe it, or drop a saying like "me costó un ojo de la cara"</label>
-            <input
-              style={styles.input}
-              value={lookupText}
-              onChange={(e) => { setLookupText(e.target.value); setLookupResults(null); }}
-              placeholder='e.g. "Cómo se llama la hija de mi hermana"'
-            />
-            <button
-              style={styles.genBtn}
-              disabled={!lookupText.trim() || lookupBusy}
-              onClick={async () => {
-                setLookupBusy(true);
-                setLookupResults(null);
-                try {
-                  const result = await findWordForDescription(lookupText.trim());
-                  setLookupResults(result.words || []);
-                } catch (e) {
-                  setLookupResults([{ word: "", why: `Couldn't look that up: ${e.message || e}` }]);
-                }
-                setLookupBusy(false);
-              }}
-            >
-              {lookupBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-              {lookupBusy ? "Thinking…" : "What's the word?"}
-            </button>
-            {lookupBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
-            {lookupResults && lookupResults.map((r, i) => (
-              r.word ? (
-                <button
-                  key={i}
-                  style={styles.lookupResult}
-                  onClick={() => {
-                    setForm((f) => ({ ...f, word: r.word }));
-                    setLookupText("");
-                    setLookupResults(null);
-                  }}
-                >
-                  <span style={styles.lookupWord}>{r.word}</span>
-                  <span style={styles.lookupWhy}>{r.why}</span>
-                </button>
-              ) : (
-                <p key={i} style={styles.genError}>{r.why}</p>
-              )
-            ))}
-          </div>
+          {(data.profile?.job || data.profile?.interests) && (
+            <div style={styles.lookupBox}>
+              <label style={styles.label}>Suggested for you ({data.profile.job || data.profile.interests})</label>
+              <button
+                style={styles.genBtn}
+                disabled={suggestBusy}
+                onClick={async () => {
+                  setSuggestBusy(true);
+                  setSuggestResults(null);
+                  try {
+                    const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
+                    const result = await suggestWordsForProfile(data.profile, existingWords);
+                    setSuggestResults(result.suggestions || []);
+                  } catch (e) {
+                    setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
+                  }
+                  setSuggestBusy(false);
+                }}
+              >
+                {suggestBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                {suggestBusy ? "Thinking…" : "Suggest words for me"}
+              </button>
+              {suggestBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+              {suggestResults && suggestResults.map((r, i) => (
+                r.word ? (
+                  <button key={i} style={styles.lookupResult} onClick={() => { setForm((f) => ({ ...f, word: r.word })); setSuggestResults(null); }}>
+                    <span style={styles.lookupWord}>{r.word}</span>
+                    <span style={styles.lookupWhy}>{r.why}</span>
+                  </button>
+                ) : (
+                  <p key={i} style={styles.genError}>{r.why}</p>
+                )
+              ))}
+            </div>
+          )}
 
           <label style={styles.label}>Word</label>
           <input style={styles.input} value={form.word} onChange={(e) => setForm({ ...form, word: e.target.value })} placeholder="e.g. deadline" />
@@ -1252,6 +1300,108 @@ export default function VocabGraph() {
           <button style={styles.learnBtn} onClick={submitAdd}>
             Save word <ChevronRight size={16} />
           </button>
+        </div>
+      )}
+
+      {activeTab === "lookup" && (
+        <div style={styles.section}>
+          <h2 style={styles.sectionTitle}>Lookup</h2>
+          <p style={styles.formHint}>Two tools: find the word you're missing, or make sense of something you heard.</p>
+
+          <label style={styles.label}>What's the word? Describe it, or drop a saying like "me costó un ojo de la cara"</label>
+          <input
+            style={styles.input}
+            value={lookupText}
+            onChange={(e) => { setLookupText(e.target.value); setLookupResults(null); }}
+            placeholder='e.g. "Cómo se llama la hija de mi hermana"'
+          />
+          <button
+            style={styles.genBtn}
+            disabled={!lookupText.trim() || lookupBusy}
+            onClick={async () => {
+              setLookupBusy(true);
+              setLookupResults(null);
+              try {
+                const result = await findWordForDescription(lookupText.trim());
+                setLookupResults(result.words || []);
+              } catch (e) {
+                setLookupResults([{ word: "", why: `Couldn't look that up: ${e.message || e}` }]);
+              }
+              setLookupBusy(false);
+            }}
+          >
+            {lookupBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+            {lookupBusy ? "Thinking…" : "What's the word?"}
+          </button>
+          {lookupBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+          {lookupResults && lookupResults.map((r, i) => (
+            r.word ? (
+              <button
+                key={i}
+                style={styles.lookupResult}
+                onClick={() => {
+                  setForm((f) => ({ ...f, word: r.word }));
+                  setLookupText("");
+                  setLookupResults(null);
+                  setActiveTab("add");
+                }}
+              >
+                <span style={styles.lookupWord}>{r.word}</span>
+                <span style={styles.lookupWhy}>{r.why}</span>
+              </button>
+            ) : (
+              <p key={i} style={styles.genError}>{r.why}</p>
+            )
+          ))}
+
+          <div style={styles.lookupDivider} />
+
+          <label style={styles.label}>Heard a phrase and didn't get it? Paste it here</label>
+          <input
+            style={styles.input}
+            value={phraseText}
+            onChange={(e) => { setPhraseText(e.target.value); setPhraseResult(null); }}
+            placeholder='e.g. "it cost an arm and a leg"'
+          />
+          <button
+            style={styles.genBtn}
+            disabled={!phraseText.trim() || phraseBusy}
+            onClick={async () => {
+              setPhraseBusy(true);
+              setPhraseResult(null);
+              try {
+                const result = await explainPhrase(phraseText.trim());
+                setPhraseResult(result);
+              } catch (e) {
+                setPhraseResult({ meaning: `Couldn't check that: ${e.message || e}`, meaningEs: "", idiomatic: false });
+              }
+              setPhraseBusy(false);
+            }}
+          >
+            {phraseBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+            {phraseBusy ? "Thinking…" : "What does this mean?"}
+          </button>
+          {phraseBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+          {phraseResult && (
+            <div style={styles.exampleBox}>
+              {phraseResult.idiomatic && <p style={styles.mineNote}>💬 idiomatic — not literal</p>}
+              <p style={styles.exampleEn}>{phraseResult.meaning}</p>
+              {phraseResult.meaningEs && <p style={styles.translationText}>{phraseResult.meaningEs}</p>}
+              {phraseResult.meaning && !phraseResult.meaning.startsWith("Couldn't") && (
+                <button
+                  style={styles.smallAddBtn2}
+                  onClick={() => {
+                    setForm((f) => ({ ...f, word: phraseText.trim() }));
+                    setPhraseText("");
+                    setPhraseResult(null);
+                    setActiveTab("add");
+                  }}
+                >
+                  <Plus size={13} /> Add this phrase to my map
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1519,6 +1669,7 @@ const styles = {
   learnBtn: { width: "100%", background: "#6FBF8B", color: "#12181b", border: "none", borderRadius: 10, padding: "13px 16px", fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontFamily: "inherit", marginTop: 6 },
   formHint: { fontSize: 12, color: "#71807d", margin: "4px 0 16px" },
   lookupBox: { background: "#12181b", border: "1px dashed #2f3b42", borderRadius: 10, padding: 14, marginBottom: 20 },
+  lookupDivider: { height: 1, background: "#232d32", margin: "24px 0" },
   lookupResult: { display: "block", width: "100%", textAlign: "left", background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 8, padding: "9px 12px", marginTop: 8, cursor: "pointer", fontFamily: "inherit" },
   lookupWord: { color: "#eae4d8", fontSize: 15, fontWeight: 600, display: "block" },
   lookupWhy: { color: "#8a9490", fontSize: 11.5, display: "block", marginTop: 2 },
