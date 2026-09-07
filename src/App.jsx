@@ -75,17 +75,36 @@ async function findImages(word, category, definition) {
   }
 }
 
+async function analyzeIdiom(input) {
+  const prompt = `Someone learning English is asking about an idiom or everyday expression. It might be in Spanish, English, or a mix. Their input:
+"${input}"
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"idiom": "...", "literal": "...", "meaning": "...", "meaningEs": "...", "spanishEquivalent": "..."}
+
+Rules:
+- "idiom": the natural English idiom or expression with the same meaning (e.g. "cost an arm and a leg").
+- "literal": what "idiom" would mean word-for-word if translated literally into Spanish, to show why it sounds strange (e.g. "costar un brazo y una pierna"). Keep it short.
+- "meaning": a simple English explanation of what the idiom actually means, under 16 words.
+- "meaningEs": Spanish translation of that meaning.
+- "spanishEquivalent": the natural Spanish idiom that expresses the same idea (e.g. "costar un ojo de la cara"), if a good one exists; otherwise an empty string.`;
+  const clean = await callClaude(prompt, 400);
+  return JSON.parse(clean);
+}
+
 async function findWordForDescription(description) {
-  const prompt = `Someone learning English is trying to remember or find an English word. They described it like this (they may write in Spanish or English):
+  const prompt = `Someone learning English is trying to find the right English word, OR the equivalent English idiom, for something. They wrote (may be in Spanish, English, or a mix):
 "${description}"
+
+If what they wrote is a casual saying or idiomatic expression (something that doesn't translate word-for-word — like "me costó un ojo de la cara"), find the natural ENGLISH IDIOM that native speakers actually use for the same idea (e.g. "cost an arm and a leg") — never a literal, word-for-word translation. If it's just a plain concept, find the matching English word instead.
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
 {"words": [{"word": "...", "why": "..."}]}
 
 Rules:
-- "words": 1 to 3 candidate English words or short phrases that match the description, best match first.
-- "word": the English word itself, lowercase, no article (write "niece", not "a niece").
-- "why": a very short reason it fits, under 12 words, in English.
+- "words": 1 to 3 candidates, best match first.
+- "word": the English word, phrase, or idiom itself — lowercase, no leading article, natural spacing (e.g. "cost an arm and a leg", not hyphenated or capitalized).
+- "why": under 18 words — if it's an idiom, briefly explain what it actually means (not the literal words), so the learner understands it's figurative.
 - If the description is already very specific, just return one strong match.`;
   const clean = await callClaude(prompt, 400);
   return JSON.parse(clean);
@@ -100,8 +119,8 @@ Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape
 {"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
-- "correctedWord": if "${word}" is misspelled or not a real English word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already spelled correctly, repeat it unchanged.
-- "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). Do not reuse the word inside its own definition.
+- "correctedWord": if "${word}" is a single misspelled word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already correct, or if it's a multi-word idiom/expression (like "cost an arm and a leg"), repeat it unchanged — don't try to reduce a phrase down to one dictionary word.
+- "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
 - "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
@@ -386,13 +405,16 @@ export default function VocabGraph() {
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
-  const [form, setForm] = useState({ word: "", def: "", defEs: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+  const [form, setForm] = useState({ word: "", def: "", defEs: "", literal: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
   const [manualLink, setManualLink] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
   const [lookupText, setLookupText] = useState("");
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupResults, setLookupResults] = useState(null);
+  const [idiomText, setIdiomText] = useState("");
+  const [idiomBusy, setIdiomBusy] = useState(false);
+  const [idiomResult, setIdiomResult] = useState(null);
   const [sentenceInput, setSentenceInput] = useState("");
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
@@ -680,6 +702,7 @@ export default function VocabGraph() {
           en: form.word.trim(),
           def: form.def.trim(),
           defEs: form.defEs.trim(),
+          literal: form.literal.trim(),
           cat: form.cat.trim() || "custom",
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
@@ -691,7 +714,7 @@ export default function VocabGraph() {
         .map((c) => ({ source: id, target: c.targetId, sentence: c.sentence }));
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
-    setForm({ word: "", def: "", defEs: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+    setForm({ word: "", def: "", defEs: "", literal: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
     setManualLink("");
     setActiveTab("map");
   };
@@ -1094,7 +1117,7 @@ export default function VocabGraph() {
           <p style={styles.formHint}>Every visitor builds their own map — this word is saved only for you.</p>
 
           <div style={styles.lookupBox}>
-            <label style={styles.label}>Not sure of the word? Describe it</label>
+            <label style={styles.label}>Not sure of the word? Describe it, or drop a saying like "me costó un ojo de la cara"</label>
             <input
               style={styles.input}
               value={lookupText}
