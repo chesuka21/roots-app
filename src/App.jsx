@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes } from "lucide-react";
+import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2 } from "lucide-react";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Anthropic and
@@ -90,6 +90,15 @@ Rules:
 - "spanishEquivalent": the natural Spanish idiom that expresses the same idea (e.g. "costar un ojo de la cara"), if a good one exists; otherwise an empty string.`;
   const clean = await callClaude(prompt, 400);
   return JSON.parse(clean);
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel(); // stop anything already playing
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "en-US";
+  utter.rate = 0.9;
+  window.speechSynthesis.speak(utter);
 }
 
 async function findWordForDescription(description) {
@@ -486,12 +495,17 @@ export default function VocabGraph() {
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [editingWord, setEditingWord] = useState(false);
+  const [editForm, setEditForm] = useState({ en: "", def: "", defEs: "", cat: "" });
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   useEffect(() => {
     setSentenceInput("");
     setCheckResult(null);
     setExampleIdx(0);
     setSavedExample(false);
     setShowTranslation(false);
+    setEditingWord(false);
+    setDeleteConfirm(false);
   }, [selected]);
   const svgRef = useRef(null);
   const simRef = useRef(null);
@@ -660,6 +674,27 @@ export default function VocabGraph() {
         nodes: { ...prev.nodes, [id]: { ...node, userExamples: [...(node.userExamples || []), clean] } },
       };
     });
+  };
+
+  const saveWordEdit = (id, updates) => {
+    setData((prev) => {
+      const node = prev.nodes[id];
+      if (!node) return prev;
+      return { ...prev, nodes: { ...prev.nodes, [id]: { ...node, ...updates } } };
+    });
+  };
+
+  const deleteWord = (id) => {
+    setData((prev) => {
+      const nodes = { ...prev.nodes };
+      delete nodes[id];
+      const edges = prev.edges.filter((e) => e.source !== id && e.target !== id);
+      const learned = prev.learned.filter((w) => w !== id);
+      const srs = { ...prev.srs };
+      delete srs[id];
+      return { ...prev, nodes, edges, learned, srs };
+    });
+    setSelected(null);
   };
 
   // (individual node dragging removed — panning/zooming the whole canvas instead)
@@ -1052,6 +1087,30 @@ export default function VocabGraph() {
                   </button>
                 </>
               )}
+
+              {learnedCount > 0 && (() => {
+                const now = Date.now();
+                const upcoming = [...learnedSet]
+                  .map((id) => ({ id, due: data.srs?.[id]?.due ?? now }))
+                  .filter((x) => x.due > now)
+                  .sort((a, b) => a.due - b.due)
+                  .slice(0, 5);
+                if (upcoming.length === 0) return null;
+                return (
+                  <div style={styles.upcomingBox}>
+                    <p style={styles.label}>Coming up next</p>
+                    {upcoming.map((x) => {
+                      const days = Math.max(1, Math.ceil((x.due - now) / DAY_MS));
+                      return (
+                        <div key={x.id} style={styles.upcomingRow}>
+                          <span style={styles.upcomingWord}>{data.nodes[x.id]?.en}</span>
+                          <span style={styles.pagerCount}>in {days} day{days === 1 ? "" : "s"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </>
           ) : (() => {
             const id = reviewQueue[reviewPos];
@@ -1062,7 +1121,10 @@ export default function VocabGraph() {
             return (
               <>
                 <p style={styles.formHint}>Card {reviewPos + 1} of {reviewQueue.length}</p>
-                <h2 style={styles.panelWord}>{w.en}</h2>
+                <div style={styles.wordRow}>
+                  <h2 style={styles.panelWord}>{w.en}</h2>
+                  <button style={styles.speakBtn} onClick={() => speak(w.en)}><Volume2 size={17} /></button>
+                </div>
 
                 {w.images && w.images.length > 0 ? (
                   <div style={styles.gallery}>
@@ -1308,7 +1370,7 @@ export default function VocabGraph() {
           <h2 style={styles.sectionTitle}>Lookup</h2>
           <p style={styles.formHint}>Two tools: find the word you're missing, or make sense of something you heard.</p>
 
-          <label style={styles.label}>What's the word? Describe it, or drop a saying like "me costó un ojo de la cara"</label>
+          <label style={styles.label}>What's the word? Describe what you mean</label>
           <input
             style={styles.input}
             value={lookupText}
@@ -1431,22 +1493,62 @@ export default function VocabGraph() {
                 </button>
               )}
 
-              <span style={{ ...styles.catTag, color: colorFor(w.cat), borderColor: colorFor(w.cat) }}>
-                {w.cat}
-              </span>
-              <h2 style={styles.panelWord}>{w.en}</h2>
-              <p style={styles.panelDef}>{w.def}</p>
-              {w.defEs && data.level === "beginner" && (
-                <p style={styles.translationText}>{w.defEs}</p>
+              {editingWord ? (
+                <>
+                  <label style={styles.label}>Word</label>
+                  <input style={styles.input} value={editForm.en} onChange={(e) => setEditForm((f) => ({ ...f, en: e.target.value }))} />
+                  <label style={styles.label}>Definition</label>
+                  <input style={styles.input} value={editForm.def} onChange={(e) => setEditForm((f) => ({ ...f, def: e.target.value }))} />
+                  <label style={styles.label}>Spanish translation</label>
+                  <input style={styles.input} value={editForm.defEs} onChange={(e) => setEditForm((f) => ({ ...f, defEs: e.target.value }))} />
+                  <label style={styles.label}>Category</label>
+                  <input style={styles.input} value={editForm.cat} onChange={(e) => setEditForm((f) => ({ ...f, cat: e.target.value }))} />
+                  <div style={styles.editActionsRow}>
+                    <button style={styles.learnBtn} onClick={() => { saveWordEdit(w.id, editForm); setEditingWord(false); }}>
+                      Save changes
+                    </button>
+                    <button style={styles.tab} onClick={() => setEditingWord(false)}>Cancel</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={styles.wordHeaderRow}>
+                    <span style={{ ...styles.catTag, color: colorFor(w.cat), borderColor: colorFor(w.cat) }}>
+                      {w.cat}
+                    </span>
+                    <div style={styles.wordHeaderActions}>
+                      <button style={styles.iconBtn} onClick={() => { setEditForm({ en: w.en, def: w.def, defEs: w.defEs || "", cat: w.cat }); setEditingWord(true); }}>
+                        <Pencil size={14} />
+                      </button>
+                      <button style={deleteConfirm ? styles.iconBtnDanger : styles.iconBtn} onClick={() => (deleteConfirm ? deleteWord(w.id) : setDeleteConfirm(true))}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  {deleteConfirm && (
+                    <p style={styles.genError}>
+                      Tap the trash icon again to permanently delete "{w.en}" — this can't be undone.{" "}
+                      <span style={{ textDecoration: "underline", cursor: "pointer" }} onClick={() => setDeleteConfirm(false)}>Cancel</span>
+                    </p>
+                  )}
+                  <div style={styles.wordRow}>
+                    <h2 style={styles.panelWord}>{w.en}</h2>
+                    <button style={styles.speakBtn} onClick={() => speak(w.en)}><Volume2 size={17} /></button>
+                  </div>
+                  <p style={styles.panelDef}>{w.def}</p>
+                  {w.defEs && data.level === "beginner" && (
+                    <p style={styles.translationText}>{w.defEs}</p>
+                  )}
+                  {w.defEs && data.level === "intermediate" && (
+                    showTranslation ? (
+                      <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
+                    ) : (
+                      <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
+                    )
+                  )}
+                </>
               )}
-              {w.defEs && data.level === "intermediate" && (
-                showTranslation ? (
-                  <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
-                ) : (
-                  <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
-                )
-              )}
-              {(() => {
+              {!editingWord && (() => {
                 const ex = examples[Math.min(exampleIdx, examples.length - 1)];
                 return (
                   <div style={styles.exampleBox}>
@@ -1612,6 +1714,9 @@ const styles = {
   tab: { flex: 1, background: "transparent", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 20, padding: "8px 6px", fontSize: 12.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   tabActive: { flex: 1, background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 20, padding: "8px 6px", fontSize: 12.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   section: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "18px 18px 22px" },
+  upcomingBox: { marginTop: 20, paddingTop: 16, borderTop: "1px solid #2f3b42" },
+  upcomingRow: { display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 },
+  upcomingWord: { color: "#eae4d8", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   sectionTitle: { fontSize: 20, margin: "0 0 8px", fontWeight: 600 },
   sectionBody: { fontSize: 13.5, color: "#b7c2be", lineHeight: 1.5, margin: "0 0 16px" },
   onboardWrap: { maxWidth: 420, margin: "60px auto 0", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
@@ -1654,6 +1759,13 @@ const styles = {
   findImgBtn: { width: "100%", height: 70, borderRadius: 10, marginBottom: 12, background: "#12181b", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px dashed #2f3b42", color: "#8a9490", fontSize: 12.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   removeImgBtn: { position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: "50%", background: "rgba(18,24,27,0.85)", border: "none", color: "#eae4d8", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   catTag: { fontSize: 10.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", border: "1px solid", borderRadius: 20, padding: "2px 9px", display: "inline-block" },
+  wordHeaderRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  wordHeaderActions: { display: "flex", gap: 8 },
+  iconBtn: { background: "#1c2530", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  iconBtnDanger: { background: "#3d2a2a", border: "1px solid #5a3a3a", color: "#d98c8c", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  wordRow: { display: "flex", alignItems: "center", gap: 10 },
+  speakBtn: { background: "none", border: "1px solid #2f3b42", color: "#9fd9b8", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  editActionsRow: { display: "flex", gap: 8, marginTop: 8 },
   panelWord: { fontSize: 28, margin: "10px 0 0", fontWeight: 600 },
   panelDef: { fontSize: 14.5, color: "#b7c2be", margin: "4px 0 14px" },
   exampleBox: { background: "#12181b", borderRadius: 10, padding: "12px 14px", marginBottom: 18, borderLeft: "3px solid #6FBF8B" },
