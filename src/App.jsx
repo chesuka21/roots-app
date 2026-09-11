@@ -1,15 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2 } from "lucide-react";
+import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings } from "lucide-react";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Groq/Gemini and
    Unsplash API keys stay on the server and never reach the browser. ---------- */
 /* Cache de respuestas IA en memoria + localStorage: si ya pediste "deadline",
    no se gasta otro request ni otros tokens. Clave para velocidad y costo. */
-const AI_CACHE_KEY = "roots-ai-cache-v1";
+const AI_CACHE_KEY = "roots-ai-cache-v2"; // v2: la v1 se envenenó con respuestas truncadas — se invalida entera
 const aiMemCache = new Map();
-function aiCacheGet(key) {
+// La clave es un hash del prompt COMPLETO: en v1 se usaban solo los primeros
+// 200 caracteres y prompts distintos (ej. corregir dos oraciones diferentes)
+// colisionaban y devolvían la respuesta de OTRA petición → "is not valid JSON".
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function aiCacheKey(prompt) { return `${hashStr(prompt)}:${prompt.length}`; }
+function aiCacheGet(prompt) {
+  const key = aiCacheKey(prompt);
   if (aiMemCache.has(key)) return aiMemCache.get(key);
   try {
     const raw = localStorage.getItem(AI_CACHE_KEY);
@@ -23,7 +33,8 @@ function aiCacheGet(key) {
   } catch (e) { /* sin cache — seguir a red */ }
   return null;
 }
-function aiCacheSet(key, value) {
+function aiCacheSet(prompt, value) {
+  const key = aiCacheKey(prompt);
   aiMemCache.set(key, value);
   try {
     const raw = localStorage.getItem(AI_CACHE_KEY);
@@ -35,11 +46,10 @@ function aiCacheSet(key, value) {
     localStorage.setItem(AI_CACHE_KEY, JSON.stringify(obj));
   } catch (e) { /* storage lleno — ignorar */ }
 }
-async function callClaude(prompt, max_tokens, attempt = 1) {
-  // v2 velocidad: backend responde en <8s (límite Vercel Hobby 10s).
+async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false) {
+  // v3: backend responde en <8s (límite Vercel Hobby 10s).
   // Un solo reintento rápido en error de red; sin esperas de 45s ni 3 reintentos.
-  const cacheKey = prompt.slice(0, 200);
-  const hit = aiCacheGet(cacheKey);
+  const hit = skipCache ? null : aiCacheGet(prompt);
   if (hit) return hit;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -48,7 +58,7 @@ async function callClaude(prompt, max_tokens, attempt = 1) {
     response = await fetch("/api/claude", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, max_tokens: Math.min(max_tokens || 400, 600) }),
+      body: JSON.stringify({ prompt, max_tokens: Math.min(max_tokens || 400, 1200) }),
       signal: controller.signal,
     });
   } catch (e) {
@@ -72,8 +82,27 @@ async function callClaude(prompt, max_tokens, attempt = 1) {
     .map((b) => b.text)
     .join("");
   const clean = text.replace(/```json|```/g, "").trim();
-  aiCacheSet(cacheKey, clean);
+  if (!skipCache) aiCacheSet(prompt, clean);
   return clean;
+}
+
+/* JSON tolerante + reintento: si la IA devuelve texto cortado o con basura,
+   se reintenta UNA vez sin cache antes de mostrar error al usuario. */
+function extractJson(text) {
+  const t = String(text || "").trim();
+  try { return JSON.parse(t); } catch (e) { /* intentar rescate abajo */ }
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) return JSON.parse(t.slice(start, end + 1));
+  throw new Error("La IA devolvió un formato inválido — intenta de nuevo.");
+}
+async function callClaudeJson(prompt, max_tokens) {
+  try {
+    return extractJson(await callClaude(prompt, max_tokens));
+  } catch (e) {
+    // Puede ser una respuesta truncada que quedó en cache: reintentar en fresco.
+    return extractJson(await callClaude(prompt, max_tokens, 1, true));
+  }
 }
 
 const IMAGE_QUERY_STOPWORDS = new Set([
@@ -123,8 +152,7 @@ Rules:
 - "meaning": a simple English explanation of what the idiom actually means, under 16 words.
 - "meaningEs": Spanish translation of that meaning.
 - "spanishEquivalent": the natural Spanish idiom that expresses the same idea (e.g. "costar un ojo de la cara"), if a good one exists; otherwise an empty string.`;
-  const clean = await callClaude(prompt, 400);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 400);
 }
 
 let cachedVoice = null;
@@ -156,6 +184,25 @@ function speakWithBrowser(text) {
   window.speechSynthesis.speak(utter);
 }
 
+/* Ajustes de voz (rueda de configuración ⚙): persisten en localStorage y
+   aplican a TODA la app — cada speak() los lee si no recibe opts explícitos. */
+const SETTINGS_KEY = "roots-settings-v1";
+const VOICES = [
+  { id: "en-US-AriaNeural", label: "Aria — mujer, EE.UU. (recomendada)" },
+  { id: "en-US-JennyNeural", label: "Jenny — mujer, EE.UU. expresiva" },
+  { id: "en-US-GuyNeural", label: "Guy — hombre, EE.UU." },
+  { id: "en-US-ChristopherNeural", label: "Christopher — hombre, EE.UU. grave" },
+  { id: "en-US-EmmaMultilingualNeural", label: "Emma — multilingüe (futura)" },
+];
+const DEFAULT_SETTINGS = { voice: "en-US-AriaNeural", rate: -5 };
+function loadVoiceSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch (e) { /* primera vez — defaults */ }
+  return { ...DEFAULT_SETTINGS };
+}
+
 let currentAudio = null;
 function stopAudio() {
   try {
@@ -177,9 +224,10 @@ async function playUrl(url) {
 
 async function speak(text, opts = {}) {
   // Orden v2: Edge TTS neural (gratis, natural) → VoiceRSS → navegador.
-  // opts: { voice, rate } — rate -10..+10, default -5 (lento para aprender).
-  const voice = opts.voice || "en-US-AriaNeural";
-  const rate = opts.rate ?? -5;
+  // opts: { voice, rate } — si no vienen, se usan los de Ajustes (⚙).
+  const saved = loadVoiceSettings();
+  const voice = opts.voice || saved.voice;
+  const rate = opts.rate ?? saved.rate;
   const cacheKey = `${voice}|${rate}|${text}`;
   if (audioCache.has(cacheKey)) {
     try { await playUrl(audioCache.get(cacheKey)); return; } catch (e) { /* cache rota — seguir a red */ }
@@ -252,8 +300,7 @@ Rules:
 - "word": the English word, phrase, or idiom itself — lowercase, no leading article, natural spacing (e.g. "cost an arm and a leg", not hyphenated or capitalized).
 - "why": under 18 words — if it's an idiom, briefly explain what it actually means (not the literal words), so the learner understands it's figurative.
 - If the description is already very specific, just return one strong match.`;
-  const clean = await callClaude(prompt, 400);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 400);
 }
 
 async function explainPhrase(phrase) {
@@ -269,8 +316,7 @@ Rules:
 - "meaning": a short, plain English explanation, under 20 words.
 - "meaningEs": the same explanation in natural Spanish, under 20 words.
 - "idiomatic": true if this is a figurative/idiomatic expression, false if it's just a plain literal phrase.`;
-  const clean = await callClaude(prompt, 400);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 400);
 }
 
 async function suggestWordsForProfile(profile, existingWords) {
@@ -288,8 +334,7 @@ Rules:
 - "suggestions": exactly 5 words relevant to their job/interests, not already in their list.
 - "word": lowercase, single common English word (no phrases).
 - "why": under 10 words, why it's useful for them specifically.`;
-  const clean = await callClaude(prompt, 500);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 500);
 }
 
 async function generateWordDetails(word, existingWords) {
@@ -307,8 +352,7 @@ Rules:
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
 - "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
 
-  const clean = await callClaude(prompt, 1000);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 1000);
 }
 
 
@@ -422,8 +466,7 @@ Rules:
 - "correct": true if the sentence is natural and grammatically fine as written, false otherwise.
 - "corrected": the most natural correct version of the sentence (if it was already correct, repeat it unchanged).
 - "note": one short, encouraging sentence in simple English explaining what changed and why (or confirming it was correct). Under 20 words.`;
-  const clean = await callClaude(prompt, 500);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 500);
 }
 
 async function checkConnectionSentence(word, connectedWord, sentence) {
@@ -439,8 +482,7 @@ Rules:
 - "correct": true if the sentence is natural and grammatically fine as written.
 - "corrected": the most natural correct sentence that still uses both words (if it was already correct, repeat it unchanged). If "usesBoth" is false, write a good example sentence using both words instead, so they see what it should look like.
 - "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.`;
-  const clean = await callClaude(prompt, 500);
-  return JSON.parse(clean);
+  return callClaudeJson(prompt, 500);
 }
 
 
@@ -636,6 +678,15 @@ export default function VocabGraph() {
   const [editingWord, setEditingWord] = useState(false);
   const [editForm, setEditForm] = useState({ en: "", def: "", defEs: "", cat: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [settings, setSettings] = useState(loadVoiceSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const updateSettings = (patch) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch (e) { /* storage lleno */ }
+      return next;
+    });
+  };
   useEffect(() => {
     setSentenceInput("");
     setCheckResult(null);
@@ -860,6 +911,15 @@ export default function VocabGraph() {
   const panStartRef = useRef(null);
   const pinchDistRef = useRef(null);
   const tapRef = useRef(null); // { nodeId, x, y, moved }
+  const dragNodeRef = useRef(null); // { id, lastX, lastY, moved } — arrastrar un nodo lo mueve; si no se mueve, cuenta como tap
+  const TAP_TOL = (e) => (e.pointerType === "touch" ? 12 : 6); // el dedo tiembla más que el mouse
+  const contentDelta = (dxPx, dyPx) => {
+    // Píxeles de pantalla → coordenadas del grafo (compensando zoom + escala del viewBox)
+    const rect = svgRef.current?.getBoundingClientRect();
+    const scale = rect && rect.width ? dimsRef.current.w / rect.width : 1;
+    const k = transformRef.current.k || 1;
+    return { dx: (dxPx * scale) / k, dy: (dyPx * scale) / k };
+  };
 
   const clampK = (k) => Math.min(3.5, Math.max(0.4, k));
   const anchor = { x: dimsRef.current.w / 2, y: dimsRef.current.h / 2 };
@@ -881,7 +941,17 @@ export default function VocabGraph() {
     if (pointersRef.current.size === 1) {
       panStartRef.current = { x: e.clientX, y: e.clientY, tx: transformRef.current.x, ty: transformRef.current.y };
       const nodeEl = e.target.closest && e.target.closest("[data-node-id]");
-      tapRef.current = { nodeId: nodeEl ? nodeEl.getAttribute("data-node-id") : null, x: e.clientX, y: e.clientY, moved: false };
+      const nodeId = nodeEl ? nodeEl.getAttribute("data-node-id") : null;
+      tapRef.current = { nodeId, x: e.clientX, y: e.clientY, moved: false };
+      if (nodeId && simRef.current) {
+        // Agarraste un nodo: se clava (fx/fy) y la simulación se calienta para reacomodar los links
+        const nd = simRef.current.nodeData.find((n) => n.id === nodeId);
+        if (nd) {
+          dragNodeRef.current = { id: nodeId, lastX: e.clientX, lastY: e.clientY, moved: false };
+          nd.fx = nd.x; nd.fy = nd.y;
+          try { simRef.current.sim.alphaTarget(0.3).restart(); } catch (err) { /* sim detenida — igual se mueve */ }
+        }
+      }
     } else if (pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()];
       pinchDistRef.current = Math.hypot(a.x - b.x, a.y - b.y);
@@ -891,10 +961,22 @@ export default function VocabGraph() {
   const onSvgPointerMove = (e) => {
     if (!pointersRef.current.has(e.pointerId)) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (tapRef.current && Math.hypot(e.clientX - tapRef.current.x, e.clientY - tapRef.current.y) > 6) {
+    if (tapRef.current && Math.hypot(e.clientX - tapRef.current.x, e.clientY - tapRef.current.y) > TAP_TOL(e)) {
       tapRef.current.moved = true; // dragged too far — this is a pan, not a tap
     }
-    if (pointersRef.current.size === 1 && panStartRef.current) {
+    const drag = dragNodeRef.current;
+    if (drag && pointersRef.current.size === 1 && simRef.current) {
+      // Arrastrando un nodo: se mueve él, el canvas NO hace pan
+      const nd = simRef.current.nodeData.find((n) => n.id === drag.id);
+      if (nd) {
+        const { dx, dy } = contentDelta(e.clientX - drag.lastX, e.clientY - drag.lastY);
+        drag.lastX = e.clientX; drag.lastY = e.clientY;
+        if (Math.hypot(dx, dy) > 0.01) drag.moved = true;
+        nd.fx = (nd.fx ?? nd.x) + dx; nd.fy = (nd.fy ?? nd.y) + dy;
+        nd.x = nd.fx; nd.y = nd.fy;
+        forceTick((n) => n + 1);
+      }
+    } else if (pointersRef.current.size === 1 && panStartRef.current) {
       const start = panStartRef.current; // snapshot now — panStartRef.current can be nulled
                                           // by pointerup before React flushes the state update below
       const dx = e.clientX - start.x;
@@ -908,6 +990,15 @@ export default function VocabGraph() {
     }
   };
   const endPointer = (e) => {
+    const drag = dragNodeRef.current;
+    if (drag && simRef.current) {
+      // Soltar el nodo: se libera (fx/fy=null) y la simulación lo acomoda; si se movió, no era tap
+      const nd = simRef.current.nodeData.find((n) => n.id === drag.id);
+      if (nd) { nd.fx = null; nd.fy = null; }
+      try { simRef.current.sim.alphaTarget(0); } catch (err) {}
+      if (drag.moved && tapRef.current) tapRef.current.moved = true;
+      dragNodeRef.current = null;
+    }
     pointersRef.current.delete(e.pointerId);
     if (pointersRef.current.size < 2) pinchDistRef.current = null;
     if (pointersRef.current.size === 1) {
@@ -1045,6 +1136,24 @@ export default function VocabGraph() {
 
   const nodeData = simRef.current?.nodeData || [];
   const linkData = simRef.current?.linkData || [];
+  // Estilo Obsidian: tamaño por nº de conexiones + atenuar lo no vecino al seleccionar
+  const degreeMap = {};
+  (data?.edges || []).forEach((e) => {
+    const a = typeof e.source === "string" ? e.source : e.source?.id;
+    const b = typeof e.target === "string" ? e.target : e.target?.id;
+    if (a) degreeMap[a] = (degreeMap[a] || 0) + 1;
+    if (b) degreeMap[b] = (degreeMap[b] || 0) + 1;
+  });
+  const neighborSet = new Set();
+  if (selected) {
+    neighborSet.add(selected);
+    (data?.edges || []).forEach((e) => {
+      const a = typeof e.source === "string" ? e.source : e.source?.id;
+      const b = typeof e.target === "string" ? e.target : e.target?.id;
+      if (a === selected && b) neighborSet.add(b);
+      if (b === selected && a) neighborSet.add(a);
+    });
+  }
   const learnedCount = learnedSet.size;
   const totalCount = Object.keys(data.nodes).length;
   const wordList = Object.values(data.nodes);
@@ -1071,6 +1180,9 @@ export default function VocabGraph() {
           </div>
         </div>
         <div style={styles.progress}>
+          <button style={styles.gearBtn} onClick={() => setShowSettings(true)} title="Ajustes de voz">
+            <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
+          </button>
           <span style={styles.progressNum}>{learnedCount}</span>
           <span style={styles.progressDen}> / {totalCount} learned</span>
           <select
@@ -1084,6 +1196,46 @@ export default function VocabGraph() {
           </select>
         </div>
       </header>
+
+      {showSettings && (
+        <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.wordHeaderRow}>
+              <h2 style={styles.sectionTitle}>Ajustes de voz</h2>
+              <button style={styles.iconBtn} onClick={() => setShowSettings(false)} title="Cerrar">
+                <X size={16} />
+              </button>
+            </div>
+            <p style={styles.sectionBody}>Se aplican a toda la app al instante.</p>
+            <label style={styles.label}>Voz (Edge Neural, gratis)</label>
+            <select
+              style={styles.input}
+              value={settings.voice}
+              onChange={(e) => updateSettings({ voice: e.target.value })}
+            >
+              {VOICES.map((v) => (
+                <option key={v.id} value={v.id}>{v.label}</option>
+              ))}
+            </select>
+            <label style={styles.label}>Velocidad: {settings.rate > 0 ? `+${settings.rate}` : settings.rate} (negativo = más lento, ideal para aprender)</label>
+            <input
+              type="range"
+              min={-10}
+              max={10}
+              step={1}
+              value={settings.rate}
+              onChange={(e) => updateSettings({ rate: Number(e.target.value) })}
+              style={styles.range}
+            />
+            <button
+              style={styles.genBtn}
+              onClick={() => speak("The river was calm in the early morning.", { voice: settings.voice, rate: settings.rate })}
+            >
+              <Volume2 size={16} /> Probar voz
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={styles.tabBar}>
         <button style={activeTab === "map" ? styles.tabActive : styles.tab} onClick={() => { setActiveTab("map"); setShowMoreMenu(false); }}>Map</button>
@@ -1150,7 +1302,11 @@ export default function VocabGraph() {
               x1={s.x} y1={s.y} x2={t.x} y2={t.y}
               stroke={lit ? "#6FBF8B" : partiallyLit ? "#D9A441" : "#33404a"}
               strokeWidth={lit ? 1.8 : 1}
-              strokeOpacity={lit ? 0.85 : partiallyLit ? 0.55 : 0.35}
+              strokeOpacity={
+                selected
+                  ? (s.id === selected || t.id === selected ? 0.9 : 0.08)
+                  : lit ? 0.85 : partiallyLit ? 0.55 : 0.35
+              }
             />
           );
         })}
@@ -1158,14 +1314,16 @@ export default function VocabGraph() {
         {nodeData.map((n) => {
           const st = status(n.id);
           const catColor = colorFor(n.cat);
-          const r = st === "learned" ? 15 : st === "suggested" ? 12 : 8;
+          const deg = degreeMap[n.id] || 0;
+          const r = (st === "learned" ? 15 : st === "suggested" ? 12 : 8) + Math.min(deg, 8);
           const fill = st === "learned" ? "#6FBF8B" : st === "suggested" ? "#D9A441" : "#2a343c";
           return (
             <g
               key={n.id}
               data-node-id={n.id}
               transform={`translate(${n.x || 0},${n.y || 0})`}
-              style={{ cursor: "pointer" }}
+              style={{ cursor: "grab" }}
+              opacity={selected && !neighborSet.has(n.id) ? 0.25 : 1}
             >
               <circle data-node-id={n.id} r={Math.max(r + 10, 22)} fill="transparent" />
               <circle r={r + 4} fill="none" stroke={catColor} strokeWidth={1.2} opacity={0.55} />
@@ -1194,7 +1352,7 @@ export default function VocabGraph() {
 
       <p style={styles.hint}>
         Tap an <span style={{ color: "#D9A441" }}>amber</span> word (linked to one you know) to learn it next.
-        Pinch or scroll to zoom, drag to pan — the map itself stays put.
+        Drag a word to move it, drag the background to pan, pinch or scroll to zoom.
       </p>
       </>
       )}
@@ -1973,4 +2131,8 @@ const styles = {
   connWord: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   inputSmall: { flex: 1, boxSizing: "border-box", background: "#12181b", border: "1px solid #2f3b42", borderRadius: 8, padding: "7px 9px", color: "#eae4d8", fontSize: 12.5, fontFamily: "inherit" },
   smallAddBtn: { flex: "0 0 auto", background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 8, padding: "7px 9px", cursor: "pointer" },
+  gearBtn: { background: "none", border: "1px solid #2f3b42", borderRadius: "50%", width: 34, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", marginRight: 10, verticalAlign: "middle" },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(10,14,16,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 20 },
+  modalCard: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "20px 20px 24px", width: "100%", maxWidth: 420, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" },
+  range: { width: "100%", accentColor: "#6FBF8B", margin: "4px 0 8px" },
 };

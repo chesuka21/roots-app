@@ -43,7 +43,7 @@ async function callGroq(prompt, maxTokens) {
             model,
             messages: [{ role: "user", content: prompt }],
             temperature: 0.2, // respuestas deterministas = menos tokens + más rápido
-            max_tokens: Math.min(maxTokens || 400, 600), // cap duro: tus prompts no necesitan más
+            max_tokens: Math.min(maxTokens || 400, 1200), // cap duro: tus prompts no necesitan más
             response_format: { type: "json_object" }, // Groq devuelve JSON directo, sin rodeos
           }),
         },
@@ -76,7 +76,7 @@ async function callGemini(prompt, maxTokens) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt + "\n\nReturn ONLY valid JSON." }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: Math.min(maxTokens || 400, 600) },
+        generationConfig: { temperature: 0.2, maxOutputTokens: Math.min(maxTokens || 400, 1200) },
       }),
     },
     8000
