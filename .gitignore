@@ -1,0 +1,13 @@
+# Deps
+node_modules/
+
+# Build output (Vercel lo genera solo, no se sube a GitHub)
+dist/
+
+# Claves locales — NUNCA se suben
+.env
+.env.local
+.env.*.local
+
+# Vercel CLI
+.vercel/

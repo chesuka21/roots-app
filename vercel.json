@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/claude.js": { "maxDuration": 15 },
+    "api/pexels.js": { "maxDuration": 10 },
+    "api/voicerss.js": { "maxDuration": 10 }
+  }
+}
