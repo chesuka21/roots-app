@@ -1,0 +1,13 @@
+{
+  "name": "Roots — Vocabulary Network",
+  "short_name": "Roots",
+  "description": "Learn English vocabulary through a growing connected map of words, with spaced repetition and AI-generated definitions.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12181b",
+  "theme_color": "#12181b",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
