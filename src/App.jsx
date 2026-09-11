@@ -475,6 +475,99 @@ function nextSrs(card, grade) {
   return { interval, ease, reps, due: Date.now() + interval * DAY_MS };
 }
 
+/* ---------- Gamificación: racha (streak) + XP + nivel ---------- */
+/* Persistencia: dentro del mismo objeto `data` de localStorage (vocab-data),
+   bajo la clave `progression`. Diseñado para evolucionar sin romper versiones viejas. */
+function initProgression() {
+  return {
+    xp: 0,                // XP total acumulado
+    level: 1,             // nivel derivado del XP
+    streak: { current: 0, best: 0, lastActive: null }, // "YYYY-MM-DD" del último día con actividad
+    wordExamplesEarned: 0, // nº de oraciones propias ya premiadas con XP (evita doble cobro)
+  };
+}
+
+// Umbral de XP por nivel (cuadrático suave: nivel n necesita n * 100 XP extra)
+function xpForLevel(level) {
+  return level * 100;
+}
+function levelForXp(xp) {
+  let level = 1;
+  while (xp >= xpForLevel(level + 1)) level += 1;
+  return level;
+}
+// Progreso dentro del nivel actual: 0..1 para pintar la barra
+function levelProgress(xp, level) {
+  const base = xpForLevel(level);
+  const next = xpForLevel(level + 1);
+  const intoLevel = xp - base;
+  const span = next - base;
+  return Math.min(1, Math.max(0, span > 0 ? intoLevel / span : 0));
+}
+
+// Actualiza la racha: +1 si retomás hoy o si ayer practicaste; se rompe si hay un hueco.
+function bumpStreak(prog) {
+  const today = todayKey();
+  const last = prog.streak?.lastActive;
+  let current = prog.streak?.current || 0;
+  if (last === today) {
+    // ya registrado hoy — no sube de nuevo
+  } else if (last === yesterKey()) {
+    current += 1;
+  } else {
+    current = 1;
+  }
+  const best = Math.max(prog.streak?.best || 0, current);
+  return { ...prog, streak: { current, best, lastActive: today } };
+}
+function yesterKey() {
+  return new Date(Date.now() - DAY_MS).toISOString().slice(0, 10);
+}
+
+// Multiplicador por nivel de inglés del usuario (auto-reporte): los avanzados
+// merecen más XP por el mismo esfuerzo (sus oraciones son más complejas).
+function levelMultiplier(level) {
+  return level === "beginner" ? 1 : level === "intermediate" ? 1.5 : 2;
+}
+
+// Premios base de XP (antes del multiplicador)
+const XP = {
+  learnWord: 10,      // memorizar una palabra nueva
+  writeExample: 20,   // escribir una oración propia correcta
+  reviewAgain: 2,
+  reviewHard: 5,
+  reviewGood: 10,
+  reviewEasy: 15,
+};
+const XP_REVIEW = { again: XP.reviewAgain, hard: XP.reviewHard, good: XP.reviewGood, easy: XP.reviewEasy };
+
+// "Calidad" de una oración escrita por el usuario — determina cuánto XP extra
+// da escribir un buen ejemplo (tu idea: "voy a bañarme" vale menos que
+// "voy a proceder a ir al baño y tomarme una ducha"). Se mide por longitud y
+// variedad léxica, SIN llamar a la IA (instantáneo y gratis).
+function analyzeSentenceQuality(sentence) {
+  const s = String(sentence || "").trim();
+  if (!s) return { words: 0, unique: 0, score: 0 };
+  const words = s.toLowerCase().replace(/[^a-z0-9áéíóúüñ'\s-]/gi, " ").split(/\s+/).filter(Boolean);
+  const unique = new Set(words);
+  // score local 0..1: combina longitud (más palabras = más elaborado) y
+  // riqueza léxica (más palabras distintas = no repite "y... y... y...").
+  const lengthScore = Math.min(1, words.length / 12);       // 12+ palabras = puntaje completo
+  const varietyScore = Math.min(1, unique.size / 8);        // 8+ palabras distintas = completo
+  return { words: words.length, unique: unique.size, score: Math.round((lengthScore * 0.5 + varietyScore * 0.5) * 100) / 100 };
+}
+// Bono de XP por calidad: 0..15 XP según qué tan elaborada es la oración.
+function sentenceQualityBonus(sentence) {
+  const { score } = analyzeSentenceQuality(sentence);
+  return Math.round(score * 15);
+}
+
+function earnXp(prog, amount) {
+  const xp = (prog.xp || 0) + amount;
+  const level = levelForXp(xp);
+  return { ...prog, xp, level };
+}
+
 async function checkSentence(word, sentence) {
   const prompt = `A beginner English learner wrote this sentence using the word "${word}":
 "${sentence}"
@@ -517,7 +610,7 @@ function buildGraphData() {
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
-  return { nodes, edges, learned: ["study"], srs, level: null, profile: null, onboarded: false };
+    return { nodes, edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, progression: initProgression() };
 }
 
 /* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
@@ -660,7 +753,7 @@ function Onboarding({ onFinish }) {
 
 /* ---------- Component ---------- */
 const SpinCSS = () => (
-  <style>{`.spin { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  <style>{`.spin { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes xpPop { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
 );
 
 export default function VocabGraph() {
@@ -710,14 +803,42 @@ export default function VocabGraph() {
     });
   };
   useEffect(() => {
-    setSentenceInput("");
-    setCheckResult(null);
-    setExampleIdx(0);
-    setSavedExample(false);
-    setShowTranslation(false);
-    setEditingWord(false);
-    setDeleteConfirm(false);
-  }, [selected]);
+      setSentenceInput("");
+      setCheckResult(null);
+      setExampleIdx(0);
+      setSavedExample(false);
+      setShowTranslation(false);
+      setEditingWord(false);
+      setDeleteConfirm(false);
+    }, [selected]);
+
+    /* --- Gamificación: estado del toast "+N XP" y helpers de concesión --- */
+    const [xpToast, setXpToast] = useState(null); // { id, amount } — se renderiza en el header
+    const xpToastIdRef = useRef(0);
+    const showXpToast = (amount) => {
+      if (!amount) return;
+      xpToastIdRef.current += 1;
+      const id = xpToastIdRef.current;
+      setXpToast({ id, amount });
+      setTimeout(() => setXpToast((t) => (t?.id === id ? null : t)), 1800);
+    };
+    // Concede XP sobre un objeto `prev` (data) y lanza el toast si hay ganancia.
+    const grantXp = (prev, amount) => {
+      if (!amount) return prev.progression;
+      showXpToast(amount);
+      return earnXp(prev.progression || initProgression(), amount);
+    };
+    // Marca el día como activo en la racha (sin sumar XP).
+    const activateStreak = () => {
+      setData((prev) => {
+        const prog = prev.progression || initProgression();
+        const bumped = bumpStreak(prog);
+        if (bumped.streak.lastActive === prog.streak?.lastActive && bumped.streak.current === prog.streak?.current) {
+          return prev; // sin cambios — evita re-render innecesario
+        }
+        return { ...prev, progression: bumped };
+      });
+    };
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const dimsRef = useRef({ w: 800, h: 820 }); // taller than wide, so the map actually fills a phone screen instead of leaving dead space below it
@@ -731,7 +852,12 @@ export default function VocabGraph() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.nodes) initial = parsed;
+                if (parsed && parsed.nodes) {
+                  initial = parsed;
+                  // Migración legacy: datos guardados antes del sistema de progresión
+                  // no tienen `progression` — se inicializa en fresco sin tocar lo demás.
+                  if (!initial.progression) initial.progression = initProgression();
+                }
       }
     } catch (e) {
       /* first visit — use starter set */
@@ -816,26 +942,35 @@ export default function VocabGraph() {
   };
 
   const markLearned = (id) => {
-    setData((prev) => ({
-      ...prev,
-      learned: [...new Set([...prev.learned, id])],
-      srs: { ...prev.srs, [id]: prev.srs?.[id] || initSrs() },
-    }));
-  };
+      activateStreak();
+      setData((prev) => {
+        const alreadyLearned = prev.learned?.includes(id);
+        let progression = grantXp(prev, alreadyLearned ? 0 : Math.round(XP.learnWord * levelMultiplier(prev.level)));
+        return {
+          ...prev,
+          learned: [...new Set([...prev.learned, id])],
+          srs: { ...prev.srs, [id]: prev.srs?.[id] || initSrs() },
+          progression,
+        };
+      });
+    };
 
-  const gradeReview = (id, grade) => {
-    const updated = nextSrs(data.srs?.[id] || initSrs(), grade);
-    setData((prev) => {
-      const today = todayKey();
-      const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
-      return {
-        ...prev,
-        srs: { ...prev.srs, [id]: updated },
-        reviewedToday: { date: today, count: prevCount + 1 },
-      };
-    });
-    return updated;
-  };
+    const gradeReview = (id, grade) => {
+      const updated = nextSrs(data.srs?.[id] || initSrs(), grade);
+      activateStreak();
+      setData((prev) => {
+        const today = todayKey();
+        const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
+        const gain = Math.round((XP_REVIEW[grade] || 0) * levelMultiplier(prev.level));
+        return {
+          ...prev,
+          srs: { ...prev.srs, [id]: updated },
+          reviewedToday: { date: today, count: prevCount + 1 },
+          progression: grantXp(prev, gain),
+        };
+      });
+      return updated;
+    };
 
   const nextReviewCard = () => {
     const next = reviewPos + 1;
@@ -874,18 +1009,25 @@ export default function VocabGraph() {
   };
 
   const addUserExample = (id, sentence) => {
-    const clean = sentence.trim();
-    if (!clean) return;
-    setData((prev) => {
-      const node = prev.nodes[id];
-      if (!node) return prev;
-      if ((node.userExamples || []).includes(clean)) return prev; // no duplicates
-      return {
-        ...prev,
-        nodes: { ...prev.nodes, [id]: { ...node, userExamples: [...(node.userExamples || []), clean] } },
-      };
-    });
-  };
+      const clean = sentence.trim();
+      if (!clean) return;
+      let gained = 0;
+      setData((prev) => {
+        const node = prev.nodes[id];
+        if (!node) return prev;
+        const alreadyHas = (node.userExamples || []).includes(clean);
+        if (alreadyHas) return prev; // no duplicates (tampoco se premia dos veces)
+        // XP por escribir un ejemplo: base + bono según elaboración de la oración.
+        const mult = levelMultiplier(prev.level);
+        gained = Math.round((XP.writeExample + sentenceQualityBonus(clean)) * mult);
+        return {
+          ...prev,
+          nodes: { ...prev.nodes, [id]: { ...node, userExamples: [...(node.userExamples || []), clean] } },
+          progression: grantXp(prev, gained),
+        };
+      });
+      return gained;
+    };
 
   const removeUserExample = (id, sentence) => {
     setData((prev) => {
@@ -1177,9 +1319,17 @@ export default function VocabGraph() {
     });
   }
   const learnedCount = learnedSet.size;
-  const totalCount = Object.keys(data.nodes).length;
-  const wordList = Object.values(data.nodes);
-  const cats = [...new Set(wordList.map((w) => w.cat))];
+    const totalCount = Object.keys(data.nodes).length;
+    const wordList = Object.values(data.nodes);
+    const cats = [...new Set(wordList.map((w) => w.cat))];
+
+    // Gamificación (progression): racha, XP, nivel y progreso de la barra
+    const prog = data.progression || initProgression();
+    const streakCurrent = prog.streak?.current || 0;
+    const streakBest = prog.streak?.best || 0;
+    const xp = prog.xp || 0;
+    const xpLevel = prog.level || 1;
+    const xpProgress = levelProgress(xp, xpLevel);
 
   const dueIds = [...learnedSet]
     .filter((id) => (data.srs?.[id]?.due ?? 0) <= Date.now())
@@ -1202,22 +1352,39 @@ export default function VocabGraph() {
           </div>
         </div>
         <div style={styles.progress}>
-          <button style={styles.gearBtn} onClick={() => setShowSettings(true)} title="Ajustes de voz">
-            <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
-          </button>
-          <span style={styles.progressNum}>{learnedCount}</span>
-          <span style={styles.progressDen}> / {totalCount} learned</span>
-          <select
-            style={styles.levelSelect}
-            value={data.level || "advanced"}
-            onChange={(e) => setData((prev) => ({ ...prev, level: e.target.value }))}
-          >
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="advanced">Advanced</option>
-          </select>
-        </div>
-      </header>
+                  <button style={styles.gearBtn} onClick={() => setShowSettings(true)} title="Ajustes de voz">
+                    <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
+                  </button>
+                  <div style={styles.gamifyRow}>
+                    <span style={styles.streakBadge} title={`Racha actual ${streakCurrent} días · mejor ${streakBest}`}>
+                      🔥 {streakCurrent}
+                    </span>
+                    <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
+                      ⭐ Lv {xpLevel}
+                    </span>
+                  </div>
+                  <div style={styles.xpBarWrap}>
+                    <div style={{ ...styles.xpBarFill, width: `${Math.round(xpProgress * 100)}%` }} />
+                  </div>
+                  <span style={styles.progressNum}>{learnedCount}</span>
+                  <span style={styles.progressDen}> / {totalCount} learned</span>
+                  <select
+                    style={styles.levelSelect}
+                    value={data.level || "advanced"}
+                    onChange={(e) => setData((prev) => ({ ...prev, level: e.target.value }))}
+                  >
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                </div>
+              </header>
+
+              {xpToast && (
+                <div key={xpToast.id} style={styles.xpToast}>
+                  +{xpToast.amount} XP
+                </div>
+              )}
 
       {showSettings && (
         <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
@@ -2157,4 +2324,10 @@ const styles = {
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(10,14,16,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 20 },
   modalCard: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "20px 20px 24px", width: "100%", maxWidth: 420, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" },
   range: { width: "100%", accentColor: "#6FBF8B", margin: "4px 0 8px" },
-};
+    gamifyRow: { display: "flex", gap: 6, justifyContent: "flex-end", marginBottom: 4 },
+    streakBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#d9a441", background: "#2a2417", border: "1px solid #4a3c1f", borderRadius: 12, padding: "2px 8px" },
+    xpBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#8cc9d9", background: "#172a2f", border: "1px solid #2a4a52", borderRadius: 12, padding: "2px 8px" },
+    xpBarWrap: { height: 5, background: "#232d32", borderRadius: 3, overflow: "hidden", marginBottom: 6, minWidth: 120 },
+    xpBarFill: { height: "100%", background: "linear-gradient(90deg, #6FBF8B, #8cc9d9)", borderRadius: 3, transition: "width 0.4s ease" },
+    xpToast: { position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 20, padding: "8px 16px", fontSize: 14, fontWeight: 600, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", zIndex: 70, boxShadow: "0 6px 20px rgba(0,0,0,0.5)", animation: "xpPop 0.25s ease" },
+  };
