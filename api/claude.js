@@ -20,13 +20,20 @@ function cleanJson(text) {
 
 async function callGroq(prompt, maxTokens) {
   // Orden: el más rápido y barato primero. GROQ_MODEL puede forzarlo desde Vercel.
-  // NOTA: llama-3.3-70b-versatile daba errores de tokens/límites en el pasado,
-  // por eso 8b-instant va primero ahora.
+  // IMPORTANTE (ago-2026): Groq retiró llama-3.1-8b-instant y llama-3.3-70b-versatile
+  // el 16/08/2026. Los reemplazos oficiales son openai/gpt-oss-20b (8B) y
+  // openai/gpt-oss-120b (70B). No uses los viejos: devuelven "does not exist".
   const candidates = [
-    process.env.GROQ_MODEL,
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-  ].filter(Boolean);
+      process.env.GROQ_MODEL,
+      "openai/gpt-oss-20b",
+      "openai/gpt-oss-120b",
+    ]
+      .filter(Boolean)
+      // Filtra modelos retirados por Groq (ago-2026): si GROQ_MODEL quedó apuntando
+      // a uno muerto, no malgastemos un request intentándolo.
+      .filter((m) => !/llama-3\.1-8b-instant|llama-3\.3-70b-versatile|llama-4-scout-17b|qwen3-32b/i.test(m))
+      // dedupe (por si GROQ_MODEL ya es uno de los defaults)
+      .filter((m, i, arr) => arr.indexOf(m) === i);
 
   let lastErr;
   for (const model of candidates) {
