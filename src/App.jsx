@@ -156,24 +156,65 @@ function speakWithBrowser(text) {
   window.speechSynthesis.speak(utter);
 }
 
-async function speak(text) {
-  // VoiceRSS gives a more natural voice; fall back to the browser's own
-  // (more robotic, but free and instant) if it's not configured or fails.
+let currentAudio = null;
+function stopAudio() {
+  try {
+    if (currentAudio) { currentAudio.pause(); currentAudio.src = ""; }
+  } catch (e) { /* ignorar */ }
+  currentAudio = null;
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+}
+// Cache de audios ya sintetizados (texto → blob URL): repetir una palabra
+// no gasta otro request. Solo memoria (los MP3 no van a localStorage).
+const audioCache = new Map();
+async function playUrl(url) {
+  stopAudio();
+  const audio = new Audio(url);
+  currentAudio = audio;
+  audio.onended = () => { if (currentAudio === audio) currentAudio = null; };
+  await audio.play();
+}
+
+async function speak(text, opts = {}) {
+  // Orden v2: Edge TTS neural (gratis, natural) → VoiceRSS → navegador.
+  // opts: { voice, rate } — rate -10..+10, default -5 (lento para aprender).
+  const voice = opts.voice || "en-US-AriaNeural";
+  const rate = opts.rate ?? -5;
+  const cacheKey = `${voice}|${rate}|${text}`;
+  if (audioCache.has(cacheKey)) {
+    try { await playUrl(audioCache.get(cacheKey)); return; } catch (e) { /* cache rota — seguir a red */ }
+  }
+  // 1) Edge TTS neural
+  try {
+    const res = await fetch(`/api/edge-tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}&rate=${encodeURIComponent(rate)}`);
+    if (res.ok) {
+      const blob = await res.blob();
+      if (blob.type.includes("audio") && blob.size > 0) {
+        const url = URL.createObjectURL(blob);
+        audioCache.set(cacheKey, url);
+        await playUrl(url);
+        return;
+      }
+    }
+  } catch (e) {
+    // caído o sin red — seguir al siguiente
+  }
+  // 2) VoiceRSS (si está configurado en el servidor)
   try {
     const res = await fetch(`/api/voicerss?text=${encodeURIComponent(text)}`);
     if (res.ok) {
       const blob = await res.blob();
       if (blob.type.includes("audio") && blob.size > 0) {
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.play();
-        audio.onended = () => URL.revokeObjectURL(url);
+        audioCache.set(cacheKey, url);
+        await playUrl(url);
         return;
       }
     }
   } catch (e) {
     // network hiccup — fall through to the browser voice below
   }
+  // 3) Voz del navegador (robótica, pero gratis e instantánea)
   speakWithBrowser(text);
 }
 
