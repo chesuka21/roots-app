@@ -46,10 +46,12 @@ function aiCacheSet(prompt, value) {
     localStorage.setItem(AI_CACHE_KEY, JSON.stringify(obj));
   } catch (e) { /* storage lleno — ignorar */ }
 }
-async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false) {
+async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false, force = null) {
   // v3: backend responde en <8s (límite Vercel Hobby 10s).
   // Un solo reintento rápido en error de red; sin esperas de 45s ni 3 reintentos.
-  const hit = skipCache ? null : aiCacheGet(prompt);
+  // `force` ("groq"|"gemini") obliga a un proveedor (para reintentos con otro modelo).
+  const ck = force ? `${prompt}|force:${force}` : prompt;
+  const hit = skipCache ? null : aiCacheGet(ck);
   if (hit) return hit;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -58,7 +60,7 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false) {
     response = await fetch("/api/claude", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, max_tokens: Math.min(max_tokens || 400, 1200) }),
+      body: JSON.stringify({ prompt, max_tokens: Math.min(max_tokens || 400, 1200), ...(force ? { force } : {}) }),
       signal: controller.signal,
     });
   } catch (e) {
@@ -66,7 +68,7 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false) {
     // un solo reintento en fallo de red
     if (attempt < 2) {
       await new Promise((r) => setTimeout(r, 800));
-      return callClaude(prompt, max_tokens, attempt + 1);
+      return callClaude(prompt, max_tokens, attempt + 1, skipCache, force);
     }
     throw e;
   } finally {
@@ -82,26 +84,43 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false) {
     .map((b) => b.text)
     .join("");
   const clean = text.replace(/```json|```/g, "").trim();
-  if (!skipCache) aiCacheSet(prompt, clean);
+  if (!skipCache) aiCacheSet(ck, clean);
   return clean;
 }
 
-/* JSON tolerante + reintento: si la IA devuelve texto cortado o con basura,
-   se reintenta UNA vez sin cache antes de mostrar error al usuario. */
+/* JSON tolerante + reparación + reintento multi-proveedor.
+   Causa real de los fallos: el modelo 8B a veces mete comillas dobles sin
+   escapar dentro de los valores (ej. en "sentence") o deja comas colgantes,
+   y eso rompe JSON.parse aunque el texto "parezca" JSON. */
+function repairJson(t) {
+  let s = String(t || "").replace(/```json|```/g, "").trim();
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start >= 0 && end > start) s = s.slice(start, end + 1);
+  s = s.replace(/,\s*([}\]])/g, "$1"); // comas colgantes: {"a":1,} → {"a":1}
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ""); // controles literales
+  s = s.replace(/\n/g, " "); // saltos de línea literales dentro de strings
+  return s;
+}
 function extractJson(text) {
   const t = String(text || "").trim();
-  try { return JSON.parse(t); } catch (e) { /* intentar rescate abajo */ }
-  const start = t.indexOf("{");
-  const end = t.lastIndexOf("}");
-  if (start >= 0 && end > start) return JSON.parse(t.slice(start, end + 1));
+  try { return JSON.parse(t); } catch (e) { /* intentar reparación abajo */ }
+  try { return JSON.parse(repairJson(t)); } catch (e) { /* reintentar fuera */ }
   throw new Error("La IA devolvió un formato inválido — intenta de nuevo.");
 }
+// Regla extra que se añade solo en los reintentos (no gasta tokens en el intento normal)
+const STRICT_JSON = `\n\nSTRICT OUTPUT RULES: respond with ONLY valid JSON (no markdown, no commentary). Never put double-quote characters (") inside any string value — use single quotes (') if you must quote a word. Close every bracket and brace.`;
 async function callClaudeJson(prompt, max_tokens) {
   try {
     return extractJson(await callClaude(prompt, max_tokens));
-  } catch (e) {
-    // Puede ser una respuesta truncada que quedó en cache: reintentar en fresco.
-    return extractJson(await callClaude(prompt, max_tokens, 1, true));
+  } catch (e1) {
+    // 2º intento: mismo proveedor, en fresco (sin cache) + regla estricta
+    try {
+      return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true));
+    } catch (e2) {
+      // 3er intento: OTRO proveedor (Gemini piensa distinto y suele formatear mejor)
+      return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "gemini"));
+    }
   }
 }
 
@@ -350,7 +369,8 @@ Rules:
 - "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
-- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.`;
+- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.
+- Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
 
   return callClaudeJson(prompt, 1000);
 }
@@ -465,7 +485,8 @@ Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape
 Rules:
 - "correct": true if the sentence is natural and grammatically fine as written, false otherwise.
 - "corrected": the most natural correct version of the sentence (if it was already correct, repeat it unchanged).
-- "note": one short, encouraging sentence in simple English explaining what changed and why (or confirming it was correct). Under 20 words.`;
+- "note": one short, encouraging sentence in simple English explaining what changed and why (or confirming it was correct). Under 20 words.
+- Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
   return callClaudeJson(prompt, 500);
 }
 
@@ -481,7 +502,8 @@ Rules:
 - "usesBoth": true only if the sentence actually contains both "${word}" and "${connectedWord}" (or a natural form of each, like plurals or verb tenses).
 - "correct": true if the sentence is natural and grammatically fine as written.
 - "corrected": the most natural correct sentence that still uses both words (if it was already correct, repeat it unchanged). If "usesBoth" is false, write a good example sentence using both words instead, so they see what it should look like.
-- "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.`;
+- "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.
+- Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
   return callClaudeJson(prompt, 500);
 }
 

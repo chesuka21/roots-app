@@ -89,18 +89,40 @@ async function callGemini(prompt, maxTokens) {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
-  const { prompt, max_tokens } = req.body || {};
+  const { prompt, max_tokens, force } = req.body || {};
   if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+  // `force`: "groq" | "gemini" — el frontend lo usa para reintentar un JSON
+  // malformado con OTRO proveedor (piensa distinto y suele formatear mejor).
+  if (force && force !== "groq" && force !== "gemini") {
+    return res.status(400).json({ error: { message: `Unknown provider: ${force}` } });
+  }
 
   const t0 = Date.now();
+  const ok = (text, provider) => {
+    res.setHeader("X-AI-Provider", provider);
+    res.setHeader("X-AI-Ms", String(Date.now() - t0));
+    return res.status(200).json({ content: [{ type: "text", text }] });
+  };
+  const tryGroq = async () => ok(await callGroq(prompt, max_tokens), "groq");
+  const tryGemini = async () => ok(await callGemini(prompt, max_tokens), "gemini");
+
+  // Proveedor forzado: solo ese (usado en reintentos de JSON inválido)
+  if (force === "groq") {
+    if (!process.env.GROQ_API_KEY) return res.status(500).json({ error: { message: "GROQ_API_KEY no configurada" } });
+    try { return await tryGroq(); }
+    catch (e) { return res.status(502).json({ error: { message: `Groq falló: ${e.message}` } }); }
+  }
+  if (force === "gemini") {
+    if (!process.env.GEMINI_API_KEY) return res.status(500).json({ error: { message: "GEMINI_API_KEY no configurada (solo Groq disponible)" } });
+    try { return await tryGemini(); }
+    catch (e) { return res.status(502).json({ error: { message: e.message } }); }
+  }
+
   // 1) Groq primero (rápido). 2) Gemini fallback solo si Groq falla.
   // Secuencial — no race con stagger, el race duplicaba consumo de tokens.
   if (process.env.GROQ_API_KEY) {
     try {
-      const text = await callGroq(prompt, max_tokens);
-      res.setHeader("X-AI-Provider", "groq");
-      res.setHeader("X-AI-Ms", String(Date.now() - t0));
-      return res.status(200).json({ content: [{ type: "text", text }] });
+      return await tryGroq();
     } catch (e) {
       console.error("Groq failed, trying Gemini:", e.message);
       if (!process.env.GEMINI_API_KEY) {
@@ -110,10 +132,7 @@ export default async function handler(req, res) {
   }
   if (process.env.GEMINI_API_KEY) {
     try {
-      const text = await callGemini(prompt, max_tokens);
-      res.setHeader("X-AI-Provider", "gemini");
-      res.setHeader("X-AI-Ms", String(Date.now() - t0));
-      return res.status(200).json({ content: [{ type: "text", text }] });
+      return await tryGemini();
     } catch (e) {
       console.error("Gemini failed:", e.message);
       return res.status(502).json({ error: { message: e.message } });
