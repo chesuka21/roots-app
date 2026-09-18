@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings } from "lucide-react";
+import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote } from "lucide-react";
+import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
+import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Groq/Gemini and
@@ -54,7 +56,7 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false, fo
   const hit = skipCache ? null : aiCacheGet(ck);
   if (hit) return hit;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 25000); // el cold start de Vercel + modelo pesado puede tardar 10-20s la primera vez
   let response;
   try {
     response = await fetch("/api/claude", {
@@ -64,9 +66,9 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false, fo
       signal: controller.signal,
     });
   } catch (e) {
-    if (e.name === "AbortError") throw new Error("La IA tardó demasiado (>12s) — intenta de nuevo.");
-    // un solo reintento en fallo de red
-    if (attempt < 2) {
+    if (e.name === "AbortError") throw new Error("La IA tardó demasiado (>25s) — intenta de nuevo.");
+    // reintento rápido si la red o el cold start de Vercel corta la conexión
+    if (attempt < 3) {
       await new Promise((r) => setTimeout(r, 800));
       return callClaude(prompt, max_tokens, attempt + 1, skipCache, force);
     }
@@ -74,10 +76,14 @@ async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false, fo
   } finally {
     clearTimeout(timeout);
   }
-  const data = await response.json();
+  const data = await response.json().catch(() => null);
   if (!response.ok) {
     const msg = data?.error?.message || data?.error || `AI request failed (${response.status})`;
     throw new Error(msg);
+  }
+  if (!data) {
+    // El backend respondió algo que no es JSON (p. ej. HTML de un deploy caído)
+    throw new Error("El servidor no respondió JSON — revisa tu conexión o el deploy.");
   }
   const text = (data.content || [])
     .filter((b) => b.type === "text")
@@ -340,7 +346,8 @@ Rules:
 
 async function suggestWordsForProfile(profile, existingWords) {
   const existingList = existingWords.map((w) => w.en).join(", ");
-  const context = [profile.job && `works as / studies: ${profile.job}`, profile.interests && `interests: ${profile.interests}`]
+  const withInterests = profileInterestsLabel(profile);
+  const context = [profile.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
     .filter(Boolean)
     .join("; ");
   const prompt = `Suggest useful English vocabulary for a learner with this background: ${context || "no background given"}.
@@ -373,7 +380,96 @@ Rules:
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
 
   return callClaudeJson(prompt, 1000);
-}
+  }
+
+  /* Búsqueda/conexiones con el diccionario local (ahorro de tokens):
+     si la palabra está en el banco offline, la definición, la traducción y la
+     categoría salen de ahí (sin llamar a la IA); solo las conexiones a palabras
+     ya aprendidas se piden a la IA (prompt corto → pocos tokens). */
+  async function generateConnections(word, correctedWord, existingWords) {
+    const wordList = existingWords.map((w) => w.en).join(", ");
+    const prompt = `For the word "${correctedWord}", 2 to 5 words FROM THIS EXISTING LIST relate naturally in meaning or everyday use: ${wordList || "(none yet)"}\n\nReturn ONLY valid JSON: {"connections":[{"word":"<one existing word from the list>","sentence":"<a short natural English sentence using both ${correctedWord} and that word>"}]}\nRules: pick the most genuinely connected words, spell them exactly as in the list, keep sentences short and simple. Never use double quotes inside a value — use single quotes.`;
+    return callClaudeJson(prompt, 350);
+  }
+  // Devuelve { details, fromLocal } donde details tiene la forma esperada por runGenerate.
+  async function generateWordDetailsSmart(word, existingWords) {
+    const local = lookupLocalWord(word);
+    const byName = {};
+    existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
+    const connToForm = (list) =>
+      (list || [])
+        .map((c) => ({ targetId: byName[(c.word || "").toLowerCase()], sentence: c.sentence, checked: true }))
+        .filter((c) => c.targetId);
+    if (local) {
+      // Caso ideal: definición/ES/categoría del banco local. Solo conexiones → IA corta.
+      let connections = [];
+      try {
+        const res = await generateConnections(word, local.en, existingWords);
+        connections = connToForm(res.connections);
+      } catch (e) { /* sin conexiones IA — se queda vacío, el usuario añade manualmente */ }
+      return {
+        fromLocal: true,
+        details: {
+          correctedWord: local.en,
+          definition: local.def,
+          definitionEs: local.defEs,
+          category: local.cat,
+          connections,
+        },
+      };
+    }
+    // No está en el banco (palabra poco común / técnica) → flujo IA completo.
+    const full = await generateWordDetails(word, existingWords);
+        return { fromLocal: false, details: full };
+      }
+
+    // Umbral de repasos para "merecer" sinónimos/antónimos (evita llamadas IA prematuras).
+    const SYNONYM_REVIEW_THRESHOLD = 3;
+    async function fetchSynonymsAntonyms(word) {
+      const prompt = `A learner has now reviewed the word "${word}" several times and wants to expand it. Give its most useful synonyms and antonyms.
+    Return ONLY valid JSON, no markdown: {"synonyms":["...","...","..."],"antonyms":["...","...","..."]}
+    Rules: 3 synonyms and up to 3 antonyms (if there is no natural antonym, use an empty array). All lowercase, single common words. Never use double quotes inside a value — use single quotes.`;
+      return callClaudeJson(prompt, 300);
+    }
+
+    /* Crecimiento de la red: palabras afines al aprender/ver una palabra.
+       Parte 1 — LOCAL y compartida (0 tokens): mismo tema/categoría desde el
+       banco offline y desde los nodos ya en el grafo (como math → study/exam). */
+    function relatedSuggestionsLocal(nodes, learned, id) {
+      const node = nodes[id];
+      if (!node) return [];
+      const cat = node.cat;
+      const learnedSet = new Set(learned || []);
+      const knownLower = new Set(Object.keys(nodes).map((k) => k.toLowerCase()));
+      const res = [];
+      for (const w of Object.values(WORDBANK_EN)) {
+        if (!w || !w.en) continue;
+        if (learnedSet.has(w.en) || knownLower.has(w.en.toLowerCase())) continue;
+        if (w.cat === cat) res.push({ word: w.en.toLowerCase(), why: `same theme: ${cat}` });
+      }
+      for (const n of Object.values(nodes)) {
+        if (!n || n.id === id || learnedSet.has(n.id)) continue;
+        if (n.cat === cat) res.push({ word: n.id, why: `related to ${node.en} (${cat})` });
+      }
+      const seen = new Set();
+      const out = [];
+      for (const s of res) {
+        if (seen.has(s.word)) continue;
+        seen.add(s.word);
+        out.push(s);
+        if (out.length >= 5) break;
+      }
+      return out;
+    }
+
+    /* Parte 2 — IA (cacheada) para sugerencias más inteligentes y temáticas. */
+    async function fetchRelatedWords(word, category, existingList) {
+      const prompt = `For a learner at the word "${word}" (theme: ${category || "general"}), suggest 4 nearby words in meaning, theme or everyday use — like a word network. Prefer common single words (e.g. for "math": sum, subtract, number, equation).
+    Do NOT repeat any of these existing: ${existingList || "(none)"}.
+    Return ONLY valid JSON: {"suggestions":[{"word":"...","why":"..."}]}
+    Rules: lowercase words, "why" under 9 words explaining the connection. Never use double quotes inside a value — use single quotes.`;
+      return callClaudeJson(prompt, 320);
+    }
 
 
 /* ---------- Starter word graph (English only, simple definitions) ---------- */
@@ -449,6 +545,79 @@ function CategoryIcon({ cat, size = 30, color = "#4a5763" }) {
   const Icon = CATEGORY_ICONS[cat] || Shapes;
   return <Icon size={size} color={color} strokeWidth={1.4} />;
 }
+
+/* ---------- Patrones (aprender estructuras reutilizables) ----------
+   Cada patrón repite una estructura (sujeto + verbo) cambiando solo el objeto.
+   Ej: "I drink ___ / Yo tomo ___" con agua, café, leche… Todo es local: sin IA,
+   sin tokens. La práctica es combinar el patrón con distintas palabras. */
+const PATTERNS = [
+  { id: "drink", en: "I drink ____", es: "Yo tomo ____", pool: ["water", "juice", "coffee", "tea", "milk"] },
+  { id: "eat", en: "I eat ____", es: "Yo como ____", pool: ["bread", "rice", "fruit", "an apple", "fish"] },
+  { id: "drinkThey", en: "They drink ____", es: "Ellos toman ____", pool: ["water", "coffee", "milk", "tea", "juice"] },
+  { id: "sheLikes", en: "She likes ____", es: "A ella le gusta ____", pool: ["soccer", "music", "cooking", "movies", "travel"] },
+  { id: "heLikes", en: "He likes ____", es: "A él le gusta ____", pool: ["soccer", "music", "video games", "reading", "art"] },
+  { id: "theyLike", en: "They like ____", es: "A ellos les gusta ____", pool: ["sports", "cooking", "music", "movies", "travel"] },
+  { id: "iWant", en: "I want ____", es: "Yo quiero ____", pool: ["coffee", "a break", "water", "help", "time"] },
+  { id: "iHave", en: "I have ____", es: "Yo tengo ____", pool: ["a dream", "a plan", "time", "a question", "a feeling"] },
+  { id: "iUse", en: "I use ____", es: "Yo uso ____", pool: ["a computer", "a phone", "technology", "water", "paper"] },
+  { id: "igoTo", en: "I go to ____", es: "Yo voy a ____", pool: ["school", "work", "the gym", "the beach", "a meeting"] },
+  { id: "thisIs", en: "This is ____", es: "Esto es ____", pool: ["the school", "my home", "a tree", "the kitchen", "my job"] },
+  { id: "iRead", en: "I read ____", es: "Yo leo ____", pool: ["a book", "books", "a story", "the news", "an email"] },
+    { id: "aIf", en: "If I ____, I would ____", es: "Si yo ____, yo ____", tier: 3 },
+    { id: "aBeen", en: "I have been ____ for ____", es: "He estado ____ por/durante ____", tier: 3 },
+    { id: "aUsedTo", en: "I used to ____", es: "Yo solía ____", tier: 3 },
+    { id: "aWish", en: "I wish I had ____", es: "Ojalá tuviera ____", tier: 3 },
+    { id: "aLookingFwd", en: "I'm looking forward to ____", es: "Espero con ganas ____", tier: 3 },
+    { id: "aDepends", en: "It depends on ____", es: "Depende de ____", tier: 2 },
+    { id: "aGoingTo", en: "I'm going to ____ tomorrow", es: "Voy a ____ mañana", tier: 2 },
+    ];
+
+    // Dificultad del patrón (progresiva): 1=inicial, 2=intermedio, 3=avanzado.
+    function patternTier(p) {
+      if (p.tier) return p.tier;
+      const s = (p.en || "").toLowerCase();
+      if (/if |could |would |been |used to|wish |depends on|looking forward|should |might |must |going to| will /.test(s)) return 3;
+      if (/likes|played|listened|worked|studied|yesterday|last |was |were |had /.test(s)) return 2;
+      return 1;
+    }
+    // Nivel máximo de patterns según el nivel de inglés del usuario (progresivo).
+        function maxTierForLevel(level) {
+          return level === "advanced" ? 3 : level === "intermediate" ? 2 : 1;
+        }
+        function tierName(t) {
+          return t === 3 ? "Avanzado" : t === 2 ? "Intermedio" : "Inicial";
+        }
+
+    // Patrones PERSONALIZADOS por interés: se añaden a la biblioteca cuando el
+    // interés coincide. La app se personaliza según los gustos del usuario, sin IA.
+    const INTEREST_PATTERNS = [
+      { match: ["cook", "kitchen", "food", "bake", "culinary"], en: "I cook ____", es: "Yo cocino ____", pool: ["rice", "fish", "a recipe", "dinner", "a meal"] },
+      { match: ["cook", "kitchen", "food", "bake"], en: "I add ____ to the dish", es: "Le agrego ____ al plato", pool: ["salt", "sugar", "flavor", "the recipe"] },
+      { match: ["soccer", "football", "sport", "sports", "basketball", "tennis"], en: "I play ____", es: "Yo juego ____", pool: ["soccer", "sports", "video games", "music"] },
+      { match: ["sport", "sports", "basketball", "tennis"], en: "I watch ____", es: "Yo miro/veo ____", pool: ["soccer", "a match", "a movie", "the news"] },
+      { match: ["music", "song", "sing", "guitar"], en: "I listen to ____", es: "Yo escucho ____", pool: ["music", "a song", "the radio", "a band"] },
+      { match: ["music", "sing", "guitar", "piano"], en: "I play the ____", es: "Yo toco el/la ____", pool: ["guitar", "piano", "drums", "music"] },
+      { match: ["tech", "computer", "coding", "program", "software", "developer"], en: "I use ____ every day", es: "Uso ____ todos los días", pool: ["a computer", "a phone", "technology", "an app"] },
+      { match: ["tech", "coding", "program", "software"], en: "I build ____", es: "Yo creo/construyo ____", pool: ["apps", "a program", "software", "a website"] },
+      { match: ["movie", "cinema", "film", "tv", "series"], en: "I watch ____", es: "Yo veo ____", pool: ["movies", "a series", "a film", "an episode"] },
+      { match: ["video game", "gaming", "games"], en: "I play ____", es: "Yo juego ____", pool: ["video games", "a board game", "soccer"] },
+      { match: ["travel", "trip", "beach", "abroad"], en: "I travel to ____", es: "Yo viajo a ____", pool: ["the beach", "another country", "the mountains", "a new city"] },
+      { match: ["art", "design", "draw", "paint", "photo"], en: "I draw ____", es: "Yo dibujo ____", pool: ["a picture", "a design", "art", "a drawing"] },
+      { match: ["business", "finance", "money", "invest", "startup"], en: "I work in ____", es: "Yo trabajo en ____", pool: ["business", "finance", "a startup", "a bank"] },
+      { match: ["read", "book", "literature", "novel"], en: "I read ____", es: "Yo leo ____", pool: ["a book", "novels", "a story", "a chapter"] },
+      { match: ["nature", "outdoor", "hike", "garden", "plant"], en: "I love ____", es: "Me encanta ____", pool: ["nature", "the forest", "the river", "outdoor places"] },
+    ];
+    // Combina los patrones del interés del usuario (arriba) con la biblioteca base.
+    function patternsForProfile(interests) {
+      const all = interests.map((i) => String(i).toLowerCase());
+      const custom = [];
+      for (const p of INTEREST_PATTERNS) {
+        if (p.match.some((k) => all.some((i) => i.includes(k)))) custom.push(p);
+      }
+      const known = new Set(PATTERNS.map((p) => p.en));
+      for (const c of custom) if (!known.has(c.en)) { PATTERNS.push(c); known.add(c.en); }
+      return PATTERNS;
+    }
 
 /* ---------- Simple SM-2-style spaced repetition (same idea Anki uses) ---------- */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -541,6 +710,30 @@ const XP = {
 };
 const XP_REVIEW = { again: XP.reviewAgain, hard: XP.reviewHard, good: XP.reviewGood, easy: XP.reviewEasy };
 
+/* ---------- Perfil: intereses (lista) ---------- */
+// Los intereses se guardan como array; se acepta el formato legacy (string
+// separado por comas) para no romper datos guardados antes de esta versión.
+const PRESET_INTERESTS = ["Cooking", "Soccer", "Music", "Technology", "Movies & TV", "Video games", "Travel", "Fitness", "Art & design", "Business & finance", "Reading", "Nature"];
+function normalizeInterests(interests) {
+  if (Array.isArray(interests)) return interests.map((s) => String(s).trim()).filter(Boolean);
+  if (typeof interests === "string") return interests.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function profileInterestsLabel(profile) {
+  if (!profile) return "";
+  return normalizeInterests(profile.interests).join(", ");
+}
+
+/* Botón de voz reutilizable para definiciones y ejemplos (inline, discreto). */
+function SpeakInline({ text, size = 13 }) {
+  if (!text) return null;
+  return (
+    <button style={styles.speakInline} title="Escuchar" onClick={() => speak(text)}>
+      <Volume2 size={size} />
+    </button>
+  );
+}
+
 // "Calidad" de una oración escrita por el usuario — determina cuánto XP extra
 // da escribir un buen ejemplo (tu idea: "voy a bañarme" vale menos que
 // "voy a proceder a ir al baño y tomarme una ducha"). Se mide por longitud y
@@ -598,10 +791,25 @@ Rules:
 - "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
   return callClaudeJson(prompt, 500);
-}
+  }
+
+  /* Corrector de la frase que el usuario escribe para practicar un patrón.
+     El alumno es el autor: escribe su propia oración y la IA solo ayuda a
+     corregirla/mejorarla (no la genera). Cacheable vía callClaudeJson. */
+  async function checkPattern(sentence) {
+    const prompt = `A learner wrote an English sentence to practice a sentence pattern: "${sentence}".
+  They are the author — help polish, don't replace their idea. If it's natural and correct, say so.
+  Return ONLY valid JSON: {"correct":true or false,"corrected":"...","note":"..."}
+  Rules:
+  - "correct": true if natural and grammatically fine as written.
+  - "corrected": the most natural correct version (repeat the sentence unchanged if already correct; keep their idea).
+  - "note": one short, encouraging sentence in simple English, under 20 words.
+  - Never use double-quote characters (") inside any value — use single quotes.`;
+    return callClaudeJson(prompt, 400);
+  }
 
 
-const STORAGE_KEY = "vocab-data";
+  const STORAGE_KEY = "vocab-data";
 
 function buildGraphData() {
   const nodes = {};
@@ -794,7 +1002,22 @@ export default function VocabGraph() {
   const [editForm, setEditForm] = useState({ en: "", def: "", defEs: "", cat: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settings, setSettings] = useState(loadVoiceSettings);
-  const [showSettings, setShowSettings] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
+    const [interestInput, setInterestInput] = useState("");
+  const [synBusy, setSynBusy] = useState(false);
+    const [synError, setSynError] = useState("");
+    const [patternNoun, setPatternNoun] = useState({});      // patrón → sustantivo seleccionado
+        const [patternHistory, setPatternHistory] = useState({}); // patrón → frases practicadas
+        const [patternReview, setPatternReview] = useState(null);  // sesión de review: {ids, pos}
+  const [relBusy, setRelBusy] = useState(false);
+    const [relError, setRelError] = useState("");
+    const [pattInput, setPattInput] = useState({});    // id de patrón → texto que escribe el usuario
+    const [pattCheck, setPattCheck] = useState({});    // id de patrón → resultado de la corrección IA
+    const [pattChecking, setPattChecking] = useState({}); // id de patrón → IA corriendo
+    const [newPaEs, setNewPaEs] = useState("");       // traducción de la plantilla del usuario
+    const [newPaText, setNewPaText] = useState("");   // frase del pattern que escribe el usuario
+    const [newPaWord, setNewPaWord] = useState("");   // palabra/objeto a añadir a la pool
+    const [newPaPool, setNewPaPool] = useState([]);   // objetos que querrá probar
   const updateSettings = (patch) => {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
@@ -815,6 +1038,7 @@ export default function VocabGraph() {
     /* --- Gamificación: estado del toast "+N XP" y helpers de concesión --- */
     const [xpToast, setXpToast] = useState(null); // { id, amount } — se renderiza en el header
     const xpToastIdRef = useRef(0);
+    const lastGradeRef = useRef(null); // snapshot para "Undo grade"
     const showXpToast = (amount) => {
       if (!amount) return;
       xpToastIdRef.current += 1;
@@ -864,6 +1088,10 @@ export default function VocabGraph() {
     }
     setData(initial);
     setLoaded(true);
+    // Precalentar la función serverless /api/claude: el primer request real del
+    // día suele caer en cold start y cortar conexión; este ping mudo hace que
+    // Vercel levante el contenedor antes de que lo necesites.
+    try { fetch("/api/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "ping", max_tokens: 1 }) }).catch(() => {}); } catch (e) {}
   }, []);
 
   useEffect(() => {
@@ -956,46 +1184,96 @@ export default function VocabGraph() {
     };
 
     const gradeReview = (id, grade) => {
-      const updated = nextSrs(data.srs?.[id] || initSrs(), grade);
-      activateStreak();
-      setData((prev) => {
-        const today = todayKey();
-        const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
-        const gain = Math.round((XP_REVIEW[grade] || 0) * levelMultiplier(prev.level));
-        return {
-          ...prev,
-          srs: { ...prev.srs, [id]: updated },
-          reviewedToday: { date: today, count: prevCount + 1 },
-          progression: grantXp(prev, gain),
+          const prevSrs = data.srs?.[id] || initSrs();
+          const updated = nextSrs(prevSrs, grade);
+          // Snapshot para "Undo grade": contiene lo que había antes de gradear y la
+          // ganancia de XP, para revertir la tarjeta si tocaste el botón equivocado.
+          const gain = Math.round((XP_REVIEW[grade] || 0) * levelMultiplier(data.level));
+          lastGradeRef.current = { id, prevSrs, gain };
+          activateStreak();
+          setData((prev) => {
+            const today = todayKey();
+            const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
+            return {
+              ...prev,
+              srs: { ...prev.srs, [id]: updated },
+              reviewedToday: { date: today, count: prevCount + 1 },
+              progression: grantXp(prev, gain),
+            };
+          });
+          return updated;
         };
-      });
-      return updated;
-    };
+
+        // Deshace el último grade (por si tocasté Again cuando querías Easy, etc.).
+        // Restaura el SRS previo de la tarjeta, quita el XP ganado y vuelve a mostrar
+        // los botones de autoevaluación.
+        const undoLastGrade = () => {
+          const snap = lastGradeRef.current;
+          if (!snap) return;
+          setData((prev) => {
+            let reviewedToday = prev.reviewedToday;
+            if (reviewedToday?.date === todayKey()) {
+              reviewedToday = { date: todayKey(), count: Math.max(0, reviewedToday.count - 1) };
+            }
+            const progression = earnXp(prev.progression || initProgression(), -snap.gain);
+            return { ...prev, srs: { ...prev.srs, [snap.id]: snap.prevSrs }, progression, reviewedToday };
+          });
+          lastGradeRef.current = null;
+          setNextReviewInfo(null); // vuelve a los botones de grade de la misma tarjeta
+        };
 
   const nextReviewCard = () => {
-    const next = reviewPos + 1;
-    if (next >= reviewQueue.length) {
-      setReviewActive(false);
-    } else {
-      setReviewPos(next);
-      setExampleIdx(0);
-      setReviewSentence("");
-      setReviewChecking(false);
-      setReviewCheckResult(null);
-      setShowTranslation(false);
-      setNextReviewInfo(null);
-    }
-  };
+      const next = reviewPos + 1;
+      lastGradeRef.current = null; // el undo solo aplica a la tarjeta actual
+      if (next >= reviewQueue.length) {
+        setReviewActive(false);
+      } else {
+        setReviewPos(next);
+        setExampleIdx(0);
+        setReviewSentence("");
+        setReviewChecking(false);
+        setReviewCheckResult(null);
+        setShowTranslation(false);
+        setNextReviewInfo(null);
+      }
+    };
 
-  const bridgesFor = (id) => {
-    if (!data) return [];
-    return data.edges
-      .filter((e) => e.source === id || e.target === id)
-      .map((e) => ({ sentence: e.sentence, other: e.source === id ? e.target : e.source }));
-  };
+    // Práctica un patrón (tocaste una palabra): lo registra para recordarlo
+    // y programa su próxima revisión (SRS de patrones, parecido al Review).
+    const practicePattern = (pid) => {
+      activateStreak();
+      setData((prev) => {
+        const existing = prev.patternSrs?.[pid];
+        if (existing) return prev; // ya registrado — no re-agendar
+        const prog = grantXp(prev, 2);
+        return { ...prev, patternSrs: { ...(prev.patternSrs || {}), [pid]: initSrs() }, progression: prog };
+      });
+    };
 
-  // your own checked/corrected sentences, shown first — they're what you
-  // actually practiced with, ahead of the system's pre-written examples
+    // Autoevaluación en el review de patrones: actualiza su SRS y avanza.
+    const gradePattern = (pid, grade) => {
+      const card = data.patternSrs?.[pid] || initSrs();
+      const updated = nextSrs(card, grade);
+      const gain = Math.round((XP_REVIEW[grade] || 0) * levelMultiplier(data.level));
+      activateStreak();
+      setData((prev) => ({
+        ...prev,
+        patternSrs: { ...prev.patternSrs, [pid]: updated },
+        progression: grantXp(prev, gain),
+      }));
+      setPatternNoun((s) => { const c = { ...s }; delete c[pid]; return c; });
+            setPatternReview((r) => (r && r.pos + 1 < r.ids.length ? { ...r, pos: r.pos + 1 } : null));
+          };
+
+    const bridgesFor = (id) => {
+        if (!data) return [];
+        return data.edges
+          .filter((e) => e.source === id || e.target === id)
+          .map((e) => ({ sentence: e.sentence, other: e.source === id ? e.target : e.source }));
+      };
+
+      // your own checked/corrected sentences, shown first — they're what you
+      // actually practiced with, ahead of the system's pre-written examples
   const allExamplesFor = (id) => {
     const node = data?.nodes?.[id];
     const mine = (node?.userExamples || []).map((s) => ({ sentence: s, other: null, mine: true }));
@@ -1226,13 +1504,13 @@ export default function VocabGraph() {
 
     // 1) definition + connections: required, this is the part that must succeed
     let generatedCategory = form.cat;
-    let generatedDefinition = form.def;
-    let generatedWord = form.word.trim();
-    try {
-      const details = await generateWordDetails(form.word.trim(), existingWords);
-      const byName = {};
-      existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
-      const spellFixed = details.correctedWord && details.correctedWord.toLowerCase() !== form.word.trim().toLowerCase();
+        let generatedDefinition = form.def;
+        let generatedWord = form.word.trim();
+        try {
+          const { fromLocal, details } = await generateWordDetailsSmart(form.word.trim(), existingWords);
+          const byName = {};
+          existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
+          const spellFixed = details.correctedWord && details.correctedWord.toLowerCase() !== form.word.trim().toLowerCase();
       // Building the network in Add Word is a different task from learning
       // it — the AI's suggested connecting sentences show up here so you can
       // see and tweak them while creating. The requirement to write your own
@@ -1258,6 +1536,7 @@ export default function VocabGraph() {
         sentence: connections[0]?.sentence || f.sentence,
       }));
       if (spellFixed) setGenError(`Corrected the spelling to "${details.correctedWord}".`);
+      else if (fromLocal) setGenError(`Loaded "${details.correctedWord || form.word.trim()}" from the local dictionary — no AI use, definición offline.`);
     } catch (e) {
       setGenError(`Couldn't generate: ${e.message || e}`);
       setGenerating(false);
@@ -1328,8 +1607,21 @@ export default function VocabGraph() {
     const streakCurrent = prog.streak?.current || 0;
     const streakBest = prog.streak?.best || 0;
     const xp = prog.xp || 0;
-    const xpLevel = prog.level || 1;
-    const xpProgress = levelProgress(xp, xpLevel);
+        const xpLevel = prog.level || 1;
+        const xpProgress = levelProgress(xp, xpLevel);
+        // Estado de la racha: ¿viva, a punto de perderse o ya se perdió?
+        const lastActive = prog.streak?.lastActive;
+        const streakDead = streakCurrent > 0 && lastActive && lastActive !== todayKey() && lastActive !== yesterKey();
+        const streakAtRisk = streakCurrent > 0 && lastActive === yesterKey(); // practicaste ayer pero aún no hoy
+    const currentInterests = normalizeInterests(data.profile?.interests);
+    // Patterns personalizados (intereses + biblioteca base) y los que están vencidos para review.
+    const profilePatterns = patternsForProfile(currentInterests.filter((i) => typeof i === "string"));
+        const customPatterns = data.customPatterns || [];
+    // Biblioteca de plantillas Slot-and-Filler: semilla + las que CREÓ el usuario.
+    const allPatternBank = [...SEED_PATTERNS, ...(data.patternBank || [])];
+        // Biblioteca base + intereses + los que CREÓ el usuario (sin duplicados por texto).
+        const allPatterns = [...profilePatterns.filter((p) => !customPatterns.some((c) => c.en === p.en)), ...customPatterns];
+        const duePatterns = allPatterns.filter((p) => { const c = data.patternSrs?.[p.id]; return c && c.due <= Date.now(); });
 
   const dueIds = [...learnedSet]
     .filter((id) => (data.srs?.[id]?.due ?? 0) <= Date.now())
@@ -1356,9 +1648,9 @@ export default function VocabGraph() {
                     <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
                   </button>
                   <div style={styles.gamifyRow}>
-                    <span style={styles.streakBadge} title={`Racha actual ${streakCurrent} días · mejor ${streakBest}`}>
-                      🔥 {streakCurrent}
-                    </span>
+                                      <span style={streakDead ? styles.streakBadgeDead : streakAtRisk ? styles.streakBadgeRisk : styles.streakBadge} title={(streakDead ? `Perdiste tu racha de ${streakCurrent} días. Mejor: ${streakBest}.` : `Racha actual ${streakCurrent} días · mejor ${streakBest}`)}>
+                                        <Flame size={11} style={{ verticalAlign: "-1px" }} /> {streakCurrent}
+                                      </span>
                     <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
                       ⭐ Lv {xpLevel}
                     </span>
@@ -1380,7 +1672,18 @@ export default function VocabGraph() {
                 </div>
               </header>
 
-              {xpToast && (
+                            {streakDead && (
+                              <div style={styles.streakNoticeLost}>
+                                You broke your {streakCurrent}-day streak. Best so far: <b>{streakBest}</b> days — practice today to start again. <Flame size={12} style={{ verticalAlign: "-2px", color: "#d98c8c" }} />
+                              </div>
+                            )}
+                            {!streakDead && streakAtRisk && (
+                              <div style={styles.streakNoticeRisk}>
+                                Practice today to keep your {streakCurrent}-day streak alive. <Flame size={12} style={{ verticalAlign: "-2px", color: "#d9a441" }} />
+                              </div>
+                            )}
+
+                            {xpToast && (
                 <div key={xpToast.id} style={styles.xpToast}>
                   +{xpToast.amount} XP
                 </div>
@@ -1390,7 +1693,7 @@ export default function VocabGraph() {
         <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
           <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={styles.wordHeaderRow}>
-              <h2 style={styles.sectionTitle}>Ajustes de voz</h2>
+              <h2 style={styles.sectionTitle}>Ajustes</h2>
               <button style={styles.iconBtn} onClick={() => setShowSettings(false)} title="Cerrar">
                 <X size={16} />
               </button>
@@ -1417,35 +1720,133 @@ export default function VocabGraph() {
               style={styles.range}
             />
             <button
-              style={styles.genBtn}
-              onClick={() => speak("The river was calm in the early morning.", { voice: settings.voice, rate: settings.rate })}
-            >
-              <Volume2 size={16} /> Probar voz
-            </button>
-          </div>
-        </div>
-      )}
+                          style={styles.genBtn}
+                          onClick={() => speak("The river was calm in the early morning.", { voice: settings.voice, rate: settings.rate })}
+                        >
+                          <Volume2 size={16} /> Probar voz
+                        </button>
 
-      <div style={styles.tabBar}>
-        <button style={activeTab === "map" ? styles.tabActive : styles.tab} onClick={() => { setActiveTab("map"); setShowMoreMenu(false); }}>Map</button>
-        <button style={activeTab === "review" ? styles.tabActive : styles.tab} onClick={() => { setActiveTab("review"); setShowMoreMenu(false); }}>
-          Review{dueCount > 0 ? ` · ${dueCount}` : ""}
-        </button>
-        <div style={{ position: "relative", flex: 1 }}>
-          <button
-            style={activeTab === "add" || activeTab === "lookup" ? styles.tabActive : styles.tab}
-            onClick={() => setShowMoreMenu((v) => !v)}
-          >
-            {activeTab === "add" ? "Add word" : activeTab === "lookup" ? "Lookup" : "More ▾"}
-          </button>
-          {showMoreMenu && (
-            <div style={styles.moreMenu}>
-              <button style={styles.moreMenuItem} onClick={() => { setActiveTab("add"); setShowMoreMenu(false); }}>Add word</button>
-              <button style={styles.moreMenuItem} onClick={() => { setActiveTab("lookup"); setShowMoreMenu(false); }}>Lookup</button>
-            </div>
-          )}
-        </div>
-      </div>
+                        <div style={styles.lookupDivider} />
+                                                <h2 style={styles.sectionTitle}>Intereses</h2>
+                                                <p style={styles.sectionBody}>Los usa la IA para recomendarte vocabulario útil. Añade los que quieras, en cualquier momento.</p>
+
+                        {currentInterests.length > 0 && (
+                          <div style={styles.tagCloud}>
+                            {currentInterests.map((it) => (
+                              <span key={it} style={styles.interestTag}>
+                                {it}
+                                <button
+                                  style={styles.removeImgBtn2}
+                                  onClick={() =>
+                                    setData((prev) => ({
+                                      ...prev,
+                                      profile: { ...prev.profile, interests: currentInterests.filter((x) => x !== it) },
+                                    }))
+                                  }
+                                >
+                                  <X size={10} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {currentInterests.length === 0 && <p style={styles.formHint}>No interests yet — pick some below.</p>}
+
+                        {PRESET_INTERESTS.filter((p) => !currentInterests.some((c) => c.toLowerCase() === p.toLowerCase())).length > 0 && (
+                          <div style={styles.tagCloud}>
+                            {PRESET_INTERESTS.filter((p) => !currentInterests.some((c) => c.toLowerCase() === p.toLowerCase())).map((p) => (
+                              <button
+                                key={p}
+                                style={styles.addTagBtn}
+                                onClick={() =>
+                                  setData((prev) => ({
+                                    ...prev,
+                                    profile: { ...prev.profile, interests: [...currentInterests, p] },
+                                  }))
+                                }
+                              >
+                                <Plus size={11} /> {p}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ ...styles.connRow, marginTop: 10 }}>
+                                                  <input
+                            style={styles.inputSmall}
+                            value={interestInput}
+                            onChange={(e) => setInterestInput(e.target.value)}
+                            placeholder="Or type a custom interest"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && interestInput.trim()) {
+                                const v = interestInput.trim();
+                                setData((prev) => ({
+                                  ...prev,
+                                  profile: { ...prev.profile, interests: currentInterests.includes(v) ? currentInterests : [...currentInterests, v] },
+                                }));
+                                setInterestInput("");
+                              }
+                            }}
+                          />
+                          <button
+                            style={styles.smallAddBtn}
+                            disabled={!interestInput.trim()}
+                            onClick={() => {
+                              const v = interestInput.trim();
+                              setData((prev) => ({
+                                ...prev,
+                                profile: { ...prev.profile, interests: currentInterests.includes(v) ? currentInterests : [...currentInterests, v] },
+                              }));
+                              setInterestInput("");
+                            }}
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+      <div style={styles.railContent}>
+                      <nav style={styles.rail}>
+                        <button
+                          style={activeTab === "map" ? styles.railBtnActive : styles.railBtn}
+                          onClick={() => setActiveTab("map")}
+                          title="Map"
+                        >
+                          <MapIcon size={19} />
+                        </button>
+                        <button
+                                            style={activeTab === "review" ? styles.railBtnActive : styles.railBtn}
+                                            onClick={() => setActiveTab("review")}
+                                            title="Review"
+                                          >
+                                            <Layers size={19} />
+                                            {dueCount > 0 && <span style={styles.railBadge}>{dueCount > 99 ? "99+" : dueCount}</span>}
+                                          </button>
+                                          <button
+                                            style={activeTab === "patterns" ? styles.railBtnActive : styles.railBtn}
+                                            onClick={() => setActiveTab("patterns")}
+                                            title="Patterns"
+                                          >
+                                            <Waves size={19} />
+                                          </button>
+                        <button
+                          style={activeTab === "add" ? styles.railBtnActive : styles.railBtn}
+                          onClick={() => setActiveTab("add")}
+                          title="Add word"
+                        >
+                          <Plus size={19} />
+                        </button>
+                        <button
+                          style={activeTab === "lookup" ? styles.railBtnActive : styles.railBtn}
+                          onClick={() => setActiveTab("lookup")}
+                          title="Lookup"
+                        >
+                          <Search size={19} />
+                        </button>
+                      </nav>
+                      <div style={styles.contentCol}>
 
       {activeTab === "map" && (
       <>
@@ -1550,7 +1951,7 @@ export default function VocabGraph() {
         <div style={styles.section}>
           {!reviewActive ? (
             <>
-              <h2 style={styles.sectionTitle}>Spaced repetition</h2>
+              <h2 style={styles.sectionTitle}><Layers size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /> Spaced repetition</h2>
               <p style={styles.sectionBody}>
                 Scheduled like Anki, but active: each card shows the word with its image and definition, then you
                 write your own sentence with it. Once it's checked, grade yourself — words you find easy come back
@@ -1646,10 +2047,13 @@ export default function VocabGraph() {
                 ) : (
                   <div style={styles.panelImgFallback}><CategoryIcon cat={w.cat} /></div>
                 )}
-                <p style={styles.panelDef}>{w.def}</p>
-                {w.defEs && data.level === "beginner" && (
-                  <p style={styles.translationText}>{w.defEs}</p>
-                )}
+                <div style={styles.defRow}>
+                                  <p style={styles.panelDef}>{w.def}</p>
+                                  <SpeakInline text={w.def} size={15} />
+                                </div>
+                                {w.defEs && data.level === "beginner" && (
+                                  <p style={styles.translationText}>{w.defEs}</p>
+                                )}
                 {w.defEs && data.level === "intermediate" && (
                   showTranslation ? (
                     <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
@@ -1714,46 +2118,199 @@ export default function VocabGraph() {
                         </div>
                       )}
                     </div>
-                    <p style={styles.exampleEn}>{ex.sentence}</p>
-                  </>
-                )}
+                                        <div style={styles.exampleEnRow}>
+                                          <p style={styles.exampleEn}>{ex.sentence}</p>
+                                          <SpeakInline text={ex.sentence} size={15} />
+                                        </div>
+                                      </>
+                                    )}
 
-                {reviewCheckResult && !nextReviewInfo && (
-                  <>
-                    <p style={styles.formHint}>How well did you remember it?</p>
-                    <div style={styles.gradeRow}>
-                      <button style={styles.gradeAgain} onClick={() => setNextReviewInfo(gradeReview(id, "again"))}>Again</button>
-                      <button style={styles.gradeHard} onClick={() => setNextReviewInfo(gradeReview(id, "hard"))}>Hard</button>
-                      <button style={styles.gradeGood} onClick={() => setNextReviewInfo(gradeReview(id, "good"))}>Good</button>
-                      <button style={styles.gradeEasy} onClick={() => setNextReviewInfo(gradeReview(id, "easy"))}>Easy</button>
-                    </div>
-                  </>
-                )}
-                {nextReviewInfo && (
-                  <div style={styles.exampleBox}>
-                    <p style={styles.mineNote}>
-                      Next review in {Math.round(nextReviewInfo.interval) <= 0 ? "less than a day" : `${Math.round(nextReviewInfo.interval)} day${Math.round(nextReviewInfo.interval) === 1 ? "" : "s"}`}
-                    </p>
-                    <button style={styles.learnBtn} onClick={nextReviewCard}>
-                      Continue <ChevronRight size={16} />
-                    </button>
-                  </div>
-                )}
+                                    {reviewCheckResult && !nextReviewInfo && (
+                                      <>
+                                        <p style={styles.formHint}>How well did you remember it?</p>
+                                        <div style={styles.gradeRow}>
+                                          <button style={styles.gradeAgain} onClick={() => setNextReviewInfo(gradeReview(id, "again"))}>Again</button>
+                                          <button style={styles.gradeHard} onClick={() => setNextReviewInfo(gradeReview(id, "hard"))}>Hard</button>
+                                          <button style={styles.gradeGood} onClick={() => setNextReviewInfo(gradeReview(id, "good"))}>Good</button>
+                                          <button style={styles.gradeEasy} onClick={() => setNextReviewInfo(gradeReview(id, "easy"))}>Easy</button>
+                                        </div>
+                                      </>
+                                    )}
+                                    {nextReviewInfo && (
+                                      <div style={styles.exampleBox}>
+                                        <p style={styles.mineNote}>
+                                          Next review in {Math.round(nextReviewInfo.interval) <= 0 ? "less than a day" : `${Math.round(nextReviewInfo.interval)} day${Math.round(nextReviewInfo.interval) === 1 ? "" : "s"}`}
+                                        </p>
+                                        <div style={styles.undoGradeRow}>
+                                          <button style={styles.undoGradeBtn} onClick={undoLastGrade}>
+                                            <RotateCcw size={13} /> Undo grade
+                                          </button>
+                                          <button style={styles.learnBtnRowBtn} onClick={nextReviewCard}>
+                                            Continue <ChevronRight size={16} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
               </>
             );
           })()}
         </div>
       )}
 
-      {activeTab === "add" && (
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Add a word</h2>
+      {activeTab === "patterns" && (
+                    <div style={styles.section}>
+                      <h2 style={styles.sectionTitle}><span style={{ color: "#6FBF8B" }}>Patterns</span> — slot & filler</h2>
+                      <p style={styles.sectionBody}>
+                        Plantillas con huecos (slots). El sistema genera combinaciones cambiando una parte a la vez —
+                        tú pruebas, fallas, y la IA te corrige. Empieza por tu nivel y desbloquea el siguiente.
+                      </p>
+
+                      {/* Crear tu propia plantilla */}
+                      <div style={styles.customPatternBox}>
+                        <h3 style={styles.customTitle}>✏️ Crear tu propia plantilla</h3>
+                        <p style={styles.formHint}>Escribe la estructura con <b>____</b> para cada hueco (p. ej. "I drink ____ in the morning"). Guarda la traducción si quieres.</p>
+                        <input style={styles.input} value={newPaText} onChange={(e) => setNewPaText(e.target.value)} placeholder='e.g. I drink ____ in the morning' />
+                        <input style={styles.input} value={newPaEs} onChange={(e) => setNewPaEs(e.target.value)} placeholder="traducción (opcional): e.g. Yo tomo ____ en la mañana" />
+                        <div style={styles.connRow}>
+                          <input style={styles.inputSmall} value={newPaWord} onChange={(e) => setNewPaWord(e.target.value)} placeholder="palabra para el hueco, ej. coffee" />
+                          <button style={styles.smallAddBtn} onClick={() => { if (newPaWord.trim()) { setNewPaPool((w) => [...w, newPaWord.trim().toLowerCase()]); setNewPaWord(""); } }}><Plus size={14} /></button>
+                        </div>
+                        {newPaPool.length > 0 && (
+                          <div style={styles.tagCloud}>
+                            {newPaPool.map((w, i) => (
+                              <span key={i} style={styles.interestTag}>{w}<button style={styles.removeImgBtn2} onClick={() => setNewPaPool((p) => p.filter((_, j) => j !== i))}><X size={10} /></button></span>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          style={styles.genBtn}
+                          disabled={!/____/.test(newPaText) || !newPaText.trim()}
+                          onClick={() => {
+                            const frame = parseUserFrame(newPaText.trim());
+                            const id = "cust" + Date.now();
+                            const nSlots = frame.filter((s) => s.k !== "verb").length;
+                            const lvl = nSlots >= 3 ? 3 : nSlots === 2 ? 2 : 1;
+                            setData((prev) => ({
+                              ...prev,
+                              patternBank: [...(prev.patternBank || []), { id, es: newPaEs.trim(), frame, subjectPool: [], objectPool: newPaPool, level: lvl }],
+                            }));
+                            setNewPaText(""); setNewPaEs(""); setNewPaWord(""); setNewPaPool([]);
+                          }}
+                        >
+                          <Plus size={15} /> Añadir a mis plantillas
+                        </button>
+                      </div>
+
+                      {/* Plantillas por nivel (SRS + drills dinámicos) */}
+                      {(() => {
+                        const bank = allPatternBank;
+                        const myLevelId = maxTierForLevel(data.level || "advanced"); // 1..4 (mapea 3 niveles de inglés a 4 de patrones)
+                        const showEs = data.level !== "advanced";
+                        const parts = [];
+                        for (const lv of PATTERN_LEVELS) {
+                          const group = bank.filter((t) => patternAutoLevel(t) === lv.id);
+                          if (!group.length) continue;
+                          const unlocked = lv.id <= myLevelId;
+                          const practicedOfLevel = group.filter((t) => data.patternSrs?.[t.id]).length;
+                          parts.push(
+                            <div key={lv.id}>
+                              <p style={styles.tierLabel}>Nivel {lv.id} — {lv.name} <span style={{ color: "#71807d", fontWeight: 400, textTransform: "none" }}>· {lv.es}</span></p>
+                              {!unlocked ? (
+                                <div style={styles.lockedBox}>
+                                  <div style={styles.lockedInner}>
+                                    <Flame size={16} color="#d98c8c" />
+                                    <span>Se desbloquea al practicar 2 plantillas del nivel {myLevelId} (llevas {practicedOfLevel}).</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {group.map((t) => {
+                                    const drills = buildDrills(t, 5);
+                                    const hist = patternHistory[t.id] || [];
+                                    const got = pattCheck[t.id];
+                                    const curDrill = patternNoun[t.id] || 0; // índice del drill actual
+                                    const d = drills[Math.min(curDrill, drills.length - 1)];
+                                    return (
+                                      <div key={t.id} style={styles.patternCard}>
+                                        <div style={styles.patternTitleRow}>
+                                          <span style={styles.patternEn}>{frameToText(t.frame)}</span>
+                                          {showEs && t.es && <span style={styles.patternEs}>{t.es}</span>}
+                                          <SpeakInline text={fillFrame(t.frame, { subject: (t.subjectPool || SLOT_POOLS.subject)[0], object: (t.objectPool || SLOT_POOLS.object)[0], time: (t.timePool || [])[0], place: (t.placePool || [])[0] })} size={13} />
+                                          {data.patternSrs?.[t.id] && <span style={styles.patternSrsTag}>interval {data.patternSrs[t.id].interval}d</span>}
+                                        </div>
+                                        <div style={styles.tagCloud}>
+                                          {drills.map((dd, i) => (
+                                            <button key={i} style={curDrill === i ? styles.patternChipActive : styles.patternChip} onClick={() => setPatternNoun((s) => ({ ...s, [t.id]: i }))}>{dd.text}</button>
+                                          ))}
+                                        </div>
+                                        {d && (
+                                          <div style={styles.patternResult}>
+                                            <div style={styles.patternResultRow}>
+                                              <p style={styles.exampleEn}>{d.text}</p>
+                                              <SpeakInline text={d.text} size={15} />
+                                            </div>
+                                            {showEs && t.es && <p style={styles.patternEs}>{t.es.replace(/____/g, d.text.split(" ").slice(-1)[0])}</p>}
+                                          </div>
+                                        )}
+                                        <input
+                                          style={styles.input}
+                                          value={pattInput[t.id] || ""}
+                                          onChange={(e) => { setPattInput((s) => ({ ...s, [t.id]: e.target.value })); setPattCheck((s) => { const c = { ...s }; delete c[t.id]; return c; }); }}
+                                          placeholder="o escribe tu propia frase con esta estructura…"
+                                        />
+                                        <button
+                                          style={styles.genBtn}
+                                          disabled={!pattInput[t.id] || !pattInput[t.id].trim() || pattChecking[t.id]}
+                                          onClick={async () => {
+                                            const text = pattInput[t.id].trim();
+                                            speak(text);
+                                            setPattChecking((s) => ({ ...s, [t.id]: true }));
+                                            try {
+                                              const r = await checkPattern(text);
+                                              setPattCheck((s) => ({ ...s, [t.id]: r }));
+                                              if (r.correct) { practicePattern(t.id); setPatternHistory((s) => ({ ...s, [t.id]: [...(s[t.id] || []), text] })); }
+                                            } catch (e) { setPattCheck((s) => ({ ...s, [t.id]: { correct: false, corrected: "", note: "No pude corregirlo: " + (e.message || e) } })); }
+                                            setPattChecking((s) => ({ ...s, [t.id]: false }));
+                                          }}
+                                        >
+                                          {pattChecking[t.id] ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                                          {pattChecking[t.id] ? "Corrigiendo…" : "Practicar · escuchar · corregir"}
+                                        </button>
+                                        {got && (
+                                          <div style={styles.patternResult}>
+                                            {got.correct ? <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ {got.note || "Suena natural."}</p> : <p style={styles.exampleEn}>{got.corrected}</p>}
+                                            {!got.correct && got.note && <p style={styles.bridgeNote}>{got.note}</p>}
+                                          </div>
+                                        )}
+                                        {hist.length > 0 && (
+                                          <div style={styles.patternHist}>
+                                            <p style={styles.patternHistLabel}>Tus frases:</p>
+                                            {hist.map((h, i) => <span key={i} style={styles.patternHistItem}>{h}</span>)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </>
+                              )}
+                            </div>
+                          );
+                        }
+                        return parts;
+                      })()}
+                    </div>
+                  )}
+
+                  {activeTab === "add" && (
+              <div style={styles.section}>
+          <h2 style={styles.sectionTitle}><Plus size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /> Add a word</h2>
           <p style={styles.formHint}>Every visitor builds their own map — this word is saved only for you.</p>
 
-          {(data.profile?.job || data.profile?.interests) && (
-            <div style={styles.lookupBox}>
-              <label style={styles.label}>Suggested for you ({data.profile.job || data.profile.interests})</label>
-              <button
+          {(data.profile?.job || currentInterests.length > 0 || learnedCount > 0) && (
+                      <div style={styles.lookupBox}>
+                        <label style={styles.label}>Suggested for you (based on {currentInterests.slice(0, 4).join(", ") || data.profile?.job || "your vocabulary"})</label>
+                        <p style={styles.formHint}>The AI mixes your interests with the words you already know to propose the next useful ones.</p>
+                        <button
                 style={styles.genBtn}
                 disabled={suggestBusy}
                 onClick={async () => {
@@ -1880,7 +2437,7 @@ export default function VocabGraph() {
 
       {activeTab === "lookup" && (
         <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Lookup</h2>
+          <h2 style={styles.sectionTitle}><Search size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /> Lookup</h2>
           <p style={styles.formHint}>Two tools: find the word you're missing, or make sense of something you heard.</p>
 
           <label style={styles.label}>What's the word? Describe what you mean</label>
@@ -1976,11 +2533,14 @@ export default function VocabGraph() {
                 </button>
               )}
             </div>
-          )}
-        </div>
-      )}
+                      )}
+                    </div>
+                  )}
 
-      {selected && (() => {
+                            </div>
+                          </div>
+
+                  {selected && (() => {
         const w = data.nodes[selected];
         if (!w) return null;
         const st = status(w.id);
@@ -2048,11 +2608,14 @@ export default function VocabGraph() {
                     <h2 style={styles.panelWord}>{w.en}</h2>
                     <button style={styles.speakBtn} onClick={() => speak(w.en)}><Volume2 size={17} /></button>
                   </div>
-                  <ClickableDefinition
-                    text={w.def}
-                    style={styles.panelDef}
-                    onWordTap={(word) => { setForm((f) => ({ ...f, word })); setActiveTab("add"); }}
-                  />
+                  <div style={styles.defRow}>
+                                      <ClickableDefinition
+                                        text={w.def}
+                                        style={styles.panelDef}
+                                        onWordTap={(word) => { setForm((f) => ({ ...f, word })); setActiveTab("add"); }}
+                                      />
+                                      <SpeakInline text={w.def} size={16} />
+                                    </div>
                   <p style={styles.tapHint}>tap any word above to add it too</p>
                   {w.defEs && data.level === "beginner" && (
                     <p style={styles.translationText}>{w.defEs}</p>
@@ -2070,7 +2633,10 @@ export default function VocabGraph() {
                 const ex = examples[Math.min(exampleIdx, examples.length - 1)];
                 return (
                   <div style={styles.exampleBox}>
-                    <p style={styles.exampleEn}>{ex.sentence}</p>
+                                      <div style={styles.exampleEnRow}>
+                                        <p style={styles.exampleEn}>{ex.sentence}</p>
+                                        <SpeakInline text={ex.sentence} size={15} />
+                                      </div>
                     <div style={styles.exampleFooter}>
                       {ex.mine ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2094,10 +2660,129 @@ export default function VocabGraph() {
               {st === "learned" ? (
                 <>
                   <div style={styles.learnedTag}>
-                    <Check size={16} color="#6FBF8B" /> Already learned
-                  </div>
+                                                        <Check size={16} color="#6FBF8B" /> Already learned
+                                                      </div>
 
-                  <label style={styles.label}>Try it — write your own sentence with "{w.en}"</label>
+                                                      {/* Crecimiento de la red: sugerir palabras afines */}
+                                                      {(() => {
+                                                        const related = relatedSuggestionsLocal(data.nodes, data.learned || [], w.id);
+                                                        const relAI = w.relatedAI || [];
+                                                        const existingIds = new Set(Object.keys(data.nodes));
+                                                        const learnedIds = new Set(data.learned || []);
+                                                        const merged = [...related, ...relAI].filter((s) => s && s.word && !learnedIds.has(s.word) && !existingIds.has(s.word.toLowerCase()));
+                                                        const seen = new Set();
+                                                        const uniq = [];
+                                                        for (const s of merged) { if (seen.has(s.word)) continue; seen.add(s.word); uniq.push(s); if (uniq.length >= 6) break; }
+                                                        return (
+                                                          <div style={styles.synBox}>
+                                                            <div style={styles.synHeader}>
+                                                              <Waves size={14} color="#6FBF8B" />
+                                                              <span style={styles.synTitle}>🌱 Grow your network — related words</span>
+                                                            </div>
+                                                            <p style={styles.formHint}>Suggestions related to “{w.en}” — tap to add, or simply ignore them.</p>
+                                                            {uniq.length > 0 && (
+                                                              <div style={styles.synRow}>
+                                                                {uniq.map((s, i) => (
+                                                                  <button key={s.word + i} style={styles.synChip} title={s.why}
+                                                                    onClick={() => { setForm((f) => ({ ...f, word: s.word })); setSelected(null); setActiveTab("add"); }}>
+                                                                    {s.word}
+                                                                  </button>
+                                                                ))}
+                                                              </div>
+                                                            )}
+                                                            {uniq.length === 0 && !relAI.length && <p style={styles.formHint}>No local suggestions yet — the AI can propose thematically nearby words.</p>}
+                                                            {relAI.length === 0 && (
+                                                              relError ? (
+                                                                <p style={styles.genError}>{relError}</p>
+                                                              ) : (
+                                                                <button
+                                                                  style={styles.genBtnSmall}
+                                                                  disabled={relBusy}
+                                                                  onClick={async () => {
+                                                                    setRelBusy(true); setRelError("");
+                                                                    try {
+                                                                      const existing = Object.values(data.nodes).map((n) => n.en).join(", ");
+                                                                      const res = await fetchRelatedWords(w.en, w.cat, existing);
+                                                                      saveWordEdit(w.id, { relatedAI: res.suggestions || [] });
+                                                                    } catch (e) { setRelError(`Couldn't fetch: ${e.message || e}`); }
+                                                                    setRelBusy(false);
+                                                                  }}
+                                                                >
+                                                                  {relBusy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                                                                  {relBusy ? "Thinking…" : "Smarter suggestions (AI)"}
+                                                                </button>
+                                                              )
+                                                            )}
+                                                          </div>
+                                                        );
+                                                      })()}
+
+                                    {/* Sinónimos y antónimos: aparecen tras suficientes repasos */}
+                                    {(() => {
+                                      const srs = data.srs?.[w.id];
+                                      const reps = srs?.reps || 0;
+                                      const sa = w.synonyms || null;
+                                      if (reps < SYNONYM_REVIEW_THRESHOLD) return null;
+                                      return (
+                                        <div style={styles.synBox}>
+                                          <div style={styles.synHeader}>
+                                            <Repeat size={14} color="#d9a441" />
+                                            <span style={styles.synTitle}>Expand it — synonyms &amp; antonyms</span>
+                                          </div>
+                                          {sa ? (
+                                            <>
+                                              <div style={styles.synRow}>
+                                                <span style={styles.synLabel}>≈ synonyms:</span>
+                                                {sa.synonyms && sa.synonyms.length > 0 ? (
+                                                  sa.synonyms.map((s) => (
+                                                    <button key={s} style={styles.synChip} onClick={() => { setForm((f) => ({ ...f, word: s })); setSelected(null); setActiveTab("add"); }}>
+                                                      {s}
+                                                    </button>
+                                                  ))
+                                                ) : <span style={styles.synEmpty}>—</span>}
+                                              </div>
+                                              <div style={styles.synRow}>
+                                                <span style={styles.synLabel}>⇄ antonyms:</span>
+                                                {sa.antonyms && sa.antonyms.length > 0 ? (
+                                                  sa.antonyms.map((s) => (
+                                                    <button key={s} style={styles.antiChip} onClick={() => { setForm((f) => ({ ...f, word: s })); setSelected(null); setActiveTab("add"); }}>
+                                                      {s}
+                                                    </button>
+                                                  ))
+                                                ) : <span style={styles.synEmpty}>none</span>}
+                                              </div>
+                                              <p style={styles.formHint}>Tap one to add it to your map and grow your network.</p>
+                                            </>
+                                          ) : synError ? (
+                                            <>
+                                              <p style={styles.genError}>{synError}</p>
+                                              <button style={styles.retryBtn} onClick={() => { setSynError(""); setSynBusy(false); }}>Retry</button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              style={styles.genBtnSmall}
+                                              disabled={synBusy}
+                                              onClick={async () => {
+                                                setSynBusy(true);
+                                                setSynError("");
+                                                try {
+                                                  const res = await fetchSynonymsAntonyms(w.en);
+                                                  saveWordEdit(w.id, { synonyms: res });
+                                                } catch (e) {
+                                                  setSynError(`Couldn't fetch: ${e.message || e}`);
+                                                }
+                                                setSynBusy(false);
+                                              }}
+                                            >
+                                              {synBusy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                                              {synBusy ? "Looking up…" : "Suggest synonyms & antonyms"}
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+
+                                    <label style={styles.label}>Try it — write your own sentence with "{w.en}"</label>
                   <input
                     style={styles.input}
                     value={sentenceInput}
@@ -2221,21 +2906,70 @@ export default function VocabGraph() {
 /* ---------- Styles ---------- */
 const styles = {
   app: {
-    fontFamily: "'Georgia', 'Iowan Old Style', serif",
-    background: "#12181b",
-    minHeight: "100vh",
-    color: "#eae4d8",
-    padding: "20px 16px 32px",
-    boxSizing: "border-box",
-    maxWidth: 900,
-    margin: "0 auto",
-  },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
+      fontFamily: "'Georgia', 'Iowan Old Style', serif",
+      background: "radial-gradient(1200px 500px at 50% -120px, #1d2f2a 0%, #12181b 55%), radial-gradient(900px 400px at 100% 100%, #14202b 0%, transparent 60%), #12181b",
+      minHeight: "100vh",
+      color: "#eae4d8",
+      padding: "20px 16px 32px",
+      boxSizing: "border-box",
+      maxWidth: 900,
+      margin: "0 auto",
+    },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, background: "rgba(111,191,139,0.045)", border: "1px solid #23362f", borderRadius: 16, padding: "14px 16px", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)" },
   tabBar: { display: "flex", gap: 6, marginBottom: 14, borderBottom: "1px solid #232d32", paddingBottom: 10 },
   moreMenu: { position: "absolute", top: "110%", right: 0, background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 10, padding: 6, zIndex: 20, minWidth: 130, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" },
   moreMenuItem: { display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#eae4d8", padding: "8px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontFamily: "inherit" },
   tab: { flex: 1, background: "transparent", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 20, padding: "8px 6px", fontSize: 12.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   tabActive: { flex: 1, background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 20, padding: "8px 6px", fontSize: 12.5, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  /* --- Barra lateral (navegación por iconos a la izquierda) --- */
+  railContent: { display: "flex", gap: 12, alignItems: "flex-start" },
+  rail: { display: "flex", flexDirection: "column", gap: 8, flex: "0 0 auto" },
+  railBtn: { position: "relative", width: 44, height: 44, borderRadius: 12, background: "#1c2530", border: "1px solid #2f3b42", color: "#8a9490", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  railBtnActive: { position: "relative", width: 44, height: 44, borderRadius: 12, background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 0 0 1px rgba(111,191,139,0.25)" },
+  railBadge: { position: "absolute", top: -4, right: -4, minWidth: 17, height: 17, borderRadius: 9, background: "#d9a441", color: "#12181b", fontSize: 9.5, fontWeight: 700, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", boxSizing: "border-box" },
+  contentCol: { flex: 1, minWidth: 0 },
+  speakInline: { background: "none", border: "none", color: "#7fb89a", cursor: "pointer", padding: 3, flex: "0 0 auto", display: "inline-flex", alignItems: "center", justifyContent: "center", marginLeft: 4 },
+  defRow: { display: "flex", alignItems: "flex-start", gap: 2 },
+  exampleEnRow: { display: "flex", alignItems: "flex-start", gap: 2 },
+  undoGradeRow: { display: "flex", gap: 8, marginTop: 10 },
+  undoGradeBtn: { flex: 1, background: "transparent", border: "1px solid #4a3c1f", color: "#d9a441", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontFamily: "inherit" },
+  learnBtnRowBtn: { flex: 1, background: "#6FBF8B", color: "#12181b", border: "none", borderRadius: 10, padding: "11px 16px", fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontFamily: "inherit", marginTop: 0 },
+  tagCloud: { display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 4px" },
+  interestTag: { display: "inline-flex", alignItems: "center", gap: 6, background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 20, padding: "5px 6px 5px 12px", fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  addTagBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", border: "1px dashed #2f3b42", color: "#8a9490", borderRadius: 20, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  synBox: { background: "#172429", border: "1px solid #2a4145", borderRadius: 12, padding: "12px 14px", margin: "12px 0 16px" },
+  synHeader: { display: "flex", alignItems: "center", gap: 7, marginBottom: 8 },
+  synTitle: { fontSize: 12.5, color: "#e7cf9e", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontWeight: 600 },
+  synRow: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  synLabel: { fontSize: 11.5, color: "#8a9490", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", marginRight: 4 },
+  synChip: { background: "transparent", border: "1px solid #3a5a42", color: "#8cd9a0", borderRadius: 20, padding: "3px 10px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  antiChip: { background: "transparent", border: "1px solid #5a3a3a", color: "#d98c8c", borderRadius: 20, padding: "3px 10px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  synEmpty: { fontSize: 12, color: "#66746f", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  retryBtn: { background: "transparent", border: "1px solid #4a3c1f", color: "#d9a441", borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", marginTop: 8 },
+  genBtnSmall: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 8, padding: "8px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", width: "100%" },
+  patternCard: { background: "#12181b", border: "1px solid #2a4145", borderRadius: 12, padding: "12px 14px", marginBottom: 12 },
+  patternTitleRow: { display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" },
+  patternEn: { fontSize: 15.5, color: "#9fd9b8", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontWeight: 600 },
+  patternEs: { fontSize: 13.5, color: "#8a9490", fontStyle: "italic" },
+  patternChip: { background: "transparent", border: "1px solid #2f3b42", color: "#b7c2be", borderRadius: 18, padding: "4px 11px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  patternChipActive: { background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 18, padding: "4px 11px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  patternResult: { background: "#172429", borderRadius: 8, padding: "10px 12px", marginTop: 8 },
+  patternResultRow: { display: "flex", alignItems: "center", gap: 6 },
+  patternHist: { marginTop: 8, borderTop: "1px dashed #232d32", paddingTop: 8 },
+  patternHistLabel: { fontSize: 10.5, color: "#71807d", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", margin: "0 0 4px" },
+  patternHistItem: { display: "inline-block", background: "#1c2530", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 8, padding: "2px 8px", fontSize: 11, marginRight: 6, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  patternSrsTag: { fontSize: 10.5, color: "#d9a441", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", border: "1px solid #4a3c1f", borderRadius: 10, padding: "1px 7px" },
+  customPatternBox: { background: "#172429", border: "1px dashed #2a4145", borderRadius: 12, padding: "14px", marginBottom: 16 },
+  customTitle: { fontSize: 15, color: "#9fd9b8", margin: "0 0 8px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  tierLabel: { fontSize: 12, color: "#6FBF8B", fontWeight: 700, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", textTransform: "uppercase", letterSpacing: 0.5, margin: "16px 0 8px", borderBottom: "1px solid #23362f", paddingBottom: 4 },
+  tierDetails: { margin: "10px 0" },
+  tierSummary: { cursor: "pointer", fontSize: 12.5, color: "#8a9490", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  lockedBox: { border: "1px dashed #4a3c1f", borderRadius: 12, padding: "12px 14px", marginTop: 12, background: "rgba(74,60,31,0.12)" },
+  lockedInner: { display: "flex", alignItems: "center", gap: 8, color: "#d9a441", fontSize: 12.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  streakBadgeDead: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#d98c8c", background: "#2a1a1a", border: "1px solid #4a2a2a", borderRadius: 12, padding: "2px 8px" },
+  streakBadgeRisk: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#d9a441", background: "#2a2417", border: "1px dashed #4a3c1f", borderRadius: 12, padding: "2px 8px" },
+  streakNoticeLost: { display: "flex", alignItems: "center", gap: 8, background: "#2a1a1a", border: "1px solid #4a2a2a", color: "#d98c8c", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  streakNoticeRisk: { display: "flex", alignItems: "center", gap: 8, background: "#2a2417", border: "1px solid #4a3c1f", color: "#d9a441", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   section: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "18px 18px 22px" },
   upcomingBox: { marginTop: 20, paddingTop: 16, borderTop: "1px solid #2f3b42" },
   upcomingRow: { display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 },

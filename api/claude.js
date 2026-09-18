@@ -3,6 +3,42 @@
 // timeouts cortos para no chocar con el límite de 10s de Vercel Hobby.
 // Gemini solo como fallback si Groq falla. La ruta sigue siendo
 // /api/claude para no tocar el cliente.
+//
+// CACHÉ COMPARTIDA (ahorro de tokens): cada respuesta de la IA se guarda por
+// hash del prompt en data/ai-cache.json (or "excel" del servidor). Si otro
+// usuario pide lo mismo, se devuelve desde cache sin gastar un solo token.
+// - En local / host persistente: se escribe en el repo (data/ai-cache.json).
+// - En Vercel serverless (FS de solo lectura): cae a /tmp por instancia.
+//   Para caché real compartida entre TODOS los usuarios en producción hace
+//   falta un KV (p. ej. Upstash gratis): ver comentario al final.
+
+import { createHash } from "crypto";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import path from "path";
+
+const REPO_CACHE = path.join(process.cwd(), "data", "ai-cache.json");
+const TMP_CACHE = "/tmp/roots-ai-cache.json";
+const cacheKey = (p) => createHash("sha256").update(String(p)).digest("hex");
+
+function loadCache() {
+  const merged = {};
+  for (const f of [REPO_CACHE, TMP_CACHE]) {
+    try { if (existsSync(f)) Object.assign(merged, JSON.parse(readFileSync(f, "utf8"))); }
+    catch { /* ignorar archivo corrupto */ }
+  }
+  return merged;
+}
+function persistCache(key, value) {
+  // En Vercel prod el FS del repo es solo lectura → se va a /tmp (por instancia).
+  // En local/host persistente → data/ai-cache.json (compartido real).
+  const target = process.env.VERCEL ? TMP_CACHE : REPO_CACHE;
+  try {
+    const obj = loadCache();
+    obj[key] = value;
+    if (target === REPO_CACHE) mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, JSON.stringify(obj));
+  } catch { /* sin permiso de escritura — la caché sigue funcionando de solo lectura */ }
+}
 
 async function fetchWithTimeout(url, options, ms) {
   const controller = new AbortController();
@@ -54,7 +90,7 @@ async function callGroq(prompt, maxTokens) {
             response_format: { type: "json_object" }, // Groq devuelve JSON directo, sin rodeos
           }),
         },
-        8000 // 8s: si no respondió, el modelo está caído — pasar al siguiente
+        9000 // 9s: justo bajo el límite de 10s de Vercel Hobby — da margen para responder
       );
       const data = await r.json();
       if (!r.ok) {
@@ -86,7 +122,7 @@ async function callGemini(prompt, maxTokens) {
         generationConfig: { temperature: 0.2, maxOutputTokens: Math.min(maxTokens || 400, 1200) },
       }),
     },
-    8000
+    9000 // Gemini también bajo el límite de Vercel Hobby
   );
   const data = await r.json();
   if (!r.ok) throw new Error(data?.error?.message || `Gemini error ${r.status}`);
@@ -101,15 +137,29 @@ export default async function handler(req, res) {
   // `force`: "groq" | "gemini" — el frontend lo usa para reintentar un JSON
   // malformado con OTRO proveedor (piensa distinto y suele formatear mejor).
   if (force && force !== "groq" && force !== "gemini") {
-    return res.status(400).json({ error: { message: `Unknown provider: ${force}` } });
-  }
+      return res.status(400).json({ error: { message: `Unknown provider: ${force}` } });
+    }
 
-  const t0 = Date.now();
-  const ok = (text, provider) => {
-    res.setHeader("X-AI-Provider", provider);
-    res.setHeader("X-AI-Ms", String(Date.now() - t0));
-    return res.status(200).json({ content: [{ type: "text", text }] });
-  };
+    // Caché compartida: si ya resolvimos este prompt, devolvemos la respuesta
+    // guardada (0 tokens). Se omite en reintentos con proveedor forzado.
+    const key = cacheKey(prompt);
+    if (!force) {
+      const hit = loadCache()[key];
+      if (hit) {
+        res.setHeader("X-AI-Cache", "hit");
+        res.setHeader("X-AI-Ms", "0");
+        return res.status(200).json({ content: [{ type: "text", text: hit }] });
+      }
+    }
+    res.setHeader("X-AI-Cache", "miss");
+
+    const t0 = Date.now();
+    const ok = (text, provider) => {
+      if (!force) persistCache(key, text);
+      res.setHeader("X-AI-Provider", provider);
+      res.setHeader("X-AI-Ms", String(Date.now() - t0));
+      return res.status(200).json({ content: [{ type: "text", text }] });
+    };
   const tryGroq = async () => ok(await callGroq(prompt, max_tokens), "groq");
   const tryGemini = async () => ok(await callGemini(prompt, max_tokens), "gemini");
 
