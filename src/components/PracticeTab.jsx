@@ -4,7 +4,7 @@
    Generación: grafo tipado directamente (sin llamada al endpoint) para
    respuesta instantánea offline. */
 import { useState, useMemo } from "react";
-import { Sparkles, Loader2, ChevronRight, Lock, Check, X } from "lucide-react";
+import { Sparkles, Loader2, ChevronRight, Check, X } from "lucide-react";
 import { fillFrame, buildDrills, frameToText, autoLevel, PATTERN_LEVELS } from "../data/patterns.js";
 import { buildSeedGraph, indexGraph, objectsOf, agentsOf } from "../lib/graph.js";
 import { fillPattern } from "../lib/generator.js";
@@ -60,6 +60,23 @@ function applyUserEdges(graph) {
     }
   } catch (e) { /* sin user graph — usamos seed limpio */ }
   return graph;
+}
+
+// Validación local de pattern: el texto tiene que mencionar el verbo y el objeto
+function validatePatternLocally(userText, picks) {
+  const userLower = userText.toLowerCase();
+  const issues = [];
+  if (!picks.agent || !userLower.includes(picks.agent.split(" ")[0].toLowerCase())) {
+    issues.push("Falta/cambiaste el sujeto (ej. 'I' / 'he')");
+  }
+  if (picks.verb) {
+    const verbBase = picks.verb.replace(/s$/, "");
+    if (!userLower.includes(verbBase)) issues.push(`Usa el verbo \"${picks.verb}\"`);
+  }
+  if (picks.object && !userLower.includes(picks.object)) {
+    issues.push(`Debes usar la palabra \"${picks.object}\"`);
+  }
+  return { ok: issues.length === 0, issues };
 }
 
 export default function PracticeTab({
@@ -138,27 +155,36 @@ export default function PracticeTab({
     if (!userSentence.trim() || !exercise) return;
     setChecking(true);
     try {
+      // 1) validación local rápida para errores obvios de gramática
+      const local = validatePatternLocally(userSentence, exercise.picks);
+      if (!local.ok) {
+        setCheckResult({ correct: false, note: local.issues.join(" · ") });
+        setChecking(false);
+        return;
+      }
+
+      // 2) validación por IA (prompt corto, solo lo necesario)
       const res = await fetch("/api/claude", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          prompt: `You are an English grammar checker for a Spanish learner. Compare the user's sentence with the target pattern.
-                
-Target pattern: "${exercise.targetText}"
-User wrote: "${userSentence.trim()}"
-
-Is the user's sentence grammatically correct AND semantically appropriate to express the same idea (even with different structure)? Respond ONLY valid JSON:
-{"correct": true|false, "reason": "short explanation in Spanish under 20 words"}`,
-          max_tokens: 150,
-          force: "openrouter", // forzar el proveedor más económico si existe
+          prompt: `Is '${userSentence.trim()}' grammatically correct English? Answer with ONLY this exact format:
+CORRECT
+or
+WRONG — <short Spanish explanation, max 12 words>`,
+          max_tokens: 80,
+          force: "openrouter",
         }),
       });
-      const parsed = await res.json();
-      let dataOut = null;
-      try { dataOut = JSON.parse(parsed.content[0].text); } catch (e) { /* fallback */ }
+      const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
 
-      if (dataOut?.correct) {
-        setCheckResult({ correct: true, note: dataOut.reason || "Perfecto!" });
+      // parseo simple: primera línea = CORRECT/WRONG
+      const firstLine = raw.split("\n")[0].trim().toUpperCase();
+      const isCorrect = firstLine === "CORRECT";
+      const note = raw.split("\n").slice(1).join(" ").trim() || (isCorrect ? "Perfecto!" : "Revisa la gramática");
+
+      if (isCorrect) {
+        setCheckResult({ correct: true, note });
         setCompleted(true);
         activateStreak();
         // Persistir aristas usadas: agent→verb→object — cada combinación correcta
@@ -177,10 +203,9 @@ Is the user's sentence grammatically correct AND semantically appropriate to exp
             [`lvl${level}-${exercise.picks?.verb}-${exercise.picks?.object}`]: { level, reps: 1, due: Date.now() + 86400000 },
           },
         }));
-        grantXp(20); // XP base por pattern correcto
+        grantXp(20);
         // Desbloqueo progresivo: si completaste 2 patterns del nivel máximo disponible,
-        // el siguiente nivel se desbloquea (memoizado en unlockedLevels se recalcula
-        // en el próximo render porque data.patternSrs cambia).
+        // el siguiente nivel se desbloquea en el próximo render (data.patternSrs cambia).
         const topUnlocked = unlockedLevels[unlockedLevels.length - 1];
         if (activeLevel === topUnlocked && onUnlockLevel) {
           const nextLvl = activeLevel + 1;
@@ -189,7 +214,7 @@ Is the user's sentence grammatically correct AND semantically appropriate to exp
           }
         }
       } else {
-        setCheckResult({ correct: false, note: dataOut?.reason || "Intenta de nuevo — la gramática puede mejorar" });
+        setCheckResult({ correct: false, note: `Revisa: ${note}` });
       }
     } catch (e) {
       setCheckResult({ correct: false, note: `No pude validar: ${e.message || "error de red"}` });
@@ -204,27 +229,27 @@ Is the user's sentence grammatically correct AND semantically appropriate to exp
         Completa oraciones siguiendo patrones. Cada nivel usa tus palabras aprendidas. Desbloquea niveles practicando.
       </p>
 
-      {/* Nivel select */}
+      {/* Nivel select — solo los desbloqueados son clicables; los bloqueados se ven candados */}
+      {/* Solo mostramos los niveles DESBLOQUEADOS — el usuario ve solo lo que puede usar ahora */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
-        {LEVELS.map((lvl) => {
-          const isUnlocked = unlockedLevels.includes(lvl);
-          return (
-            <button
-              key={lvl}
-              onClick={() => isUnlocked && startExercise(lvl)}
-              disabled={!isUnlocked}
-              style={{
-                ...(activeLevel === lvl ? styles.tabActive : styles.tab),
-                opacity: isUnlocked ? 1 : 0.4,
-                position: "relative",
-              }}
-            >
-              {!isUnlocked && <Lock size={11} style={{ position: "absolute", top: -4, right: -4 }} />}
-              Level {lvl}
-            </button>
-          );
-        })}
+        {unlockedLevels.map((lvl) => (
+          <button
+            key={lvl}
+            onClick={() => startExercise(lvl)}
+            style={{
+              ...(activeLevel === lvl ? styles.tabActive : styles.tab),
+            }}
+          >
+            Level {lvl}
+          </button>
+        ))}
       </div>
+      {/* los candados aparecen como texto informativo si hay un nivel siguiente bloqueado */}
+      {unlockedLevels[unlockedLevels.length - 1] < 4 && (
+        <p style={styles.formHint}>
+          🔒 Nivel {unlockedLevels[unlockedLevels.length - 1] + 1} bloqueado — practica 2 veces el nivel actual para desbloquearlo
+        </p>
+      )}
 
       {exercise && (
         <>

@@ -154,10 +154,11 @@ async function findImages(word, category, definition) {
   // the right sense — e.g. "meeting" alone could be anything, but "meeting
   // time people gather talk" (word + category + definition keywords) points
   // straight at the office/gathering meaning described in its definition.
+  // + enviamos `word` aparte para reforzar el resultado en el backend
   const parts = [word, category, keywordsFromDefinition(definition)].filter(Boolean);
   const query = parts.join(" ");
   try {
-    const res = await fetch(`/api/pexels?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`/api/pexels?q=${encodeURIComponent(query)}&word=${encodeURIComponent(word)}`);
     const data = await res.json();
     return data.images || [];
   } catch (e) {
