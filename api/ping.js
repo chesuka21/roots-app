@@ -30,7 +30,7 @@ export default async function handler(req, res) {
       await t0fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-        body: JSON.stringify({ model: "z-ai/glm-5.2:free", messages: [{ role: "user", content: "hi" }], max_tokens: 1 }),
+        body: JSON.stringify({ model: "zhipu/glm-4.5-flash", messages: [{ role: "user", content: "hi" }], max_tokens: 1 }),
       });
       out.openrouter_ms = Date.now() - t;
     } catch (e) { out.openrouter_error = e.message; }

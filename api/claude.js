@@ -55,9 +55,9 @@ function cleanJson(text) {
 }
 
 async function callOpenRouter(prompt, maxTokens) {
-  // OpenRouter gratuito: z-ai/glm-5.2:free (50 req/día). Buen JSON, API shape
-  // OpenAI-compatible. Más lento que Groq pero confiable como red de seguridad.
-  const model = process.env.OPENROUTER_MODEL || "z-ai/glm-5.2:free";
+  // OpenRouter gratuito: reemplazo de z-ai/glm-5.2:free (modelo libre cambió nombre; GLM
+  // terminology updated per openrouter docs — gpt-5-flash es el free ahora).
+  const model = process.env.OPENROUTER_MODEL || "zhipu/glm-4.5-flash";
   const r = await fetchWithTimeout(
     "https://openrouter.ai/api/v1/chat/completions",
     {
