@@ -1,6 +1,7 @@
+import PracticeTab from "./components/PracticeTab.jsx";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote } from "lucide-react";
+import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
 
@@ -1839,6 +1840,13 @@ export default function VocabGraph() {
                           <Plus size={19} />
                         </button>
                         <button
+                          style={activeTab === "practice" ? styles.railBtnActive : styles.railBtn}
+                          onClick={() => setActiveTab("practice")}
+                          title="Practice (patterns dinámicos)"
+                        >
+                          <Play size={19} />
+                        </button>
+                        <button
                           style={activeTab === "lookup" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("lookup")}
                           title="Lookup"
@@ -2299,6 +2307,19 @@ export default function VocabGraph() {
                         return parts;
                       })()}
                     </div>
+                  )}
+
+                  {activeTab === "practice" && (
+                    <PracticeTab
+                      data={data}
+                      setData={setData}
+                      learnedSet={learnedSet}
+                      wordbank={new Map(Object.values(data.nodes).map((n) => [n.id, n]))}
+                      settings={settings}
+                      grantXp={grantXp}
+                      activateStreak={activateStreak}
+                      styles={styles}
+                    />
                   )}
 
                   {activeTab === "add" && (
