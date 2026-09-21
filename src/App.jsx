@@ -3080,6 +3080,11 @@ const styles = {
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(10,14,16,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 20 },
   modalCard: { background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 14, padding: "20px 20px 24px", width: "100%", maxWidth: 420, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" },
   range: { width: "100%", accentColor: "#6FBF8B", margin: "4px 0 8px" },
+  // PracticeTab — acordeón por nivel
+  levelCard: { background: "#161e23", border: "1px solid #232d32", borderRadius: 12, overflow: "hidden" },
+  levelHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "12px 14px", background: "none", border: "none", textAlign: "left", color: "inherit", cursor: "pointer", gap: 10 },
+  progressBarSm: { height: 4, width: 56, background: "#232d32", borderRadius: 2, overflow: "hidden" },
+  progressBarFillSm: { height: "100%", background: "#6FBF8B", borderRadius: 2 },
     gamifyRow: { display: "flex", gap: 6, justifyContent: "flex-end", marginBottom: 4 },
     streakBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#d9a441", background: "#2a2417", border: "1px solid #4a3c1f", borderRadius: 12, padding: "2px 8px" },
     xpBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#8cc9d9", background: "#172a2f", border: "1px solid #2a4a52", borderRadius: 12, padding: "2px 8px" },
