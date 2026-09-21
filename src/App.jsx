@@ -2210,17 +2210,23 @@ export default function VocabGraph() {
                         </button>
                       </div>
 
-                      {/* Plantillas por nivel (SRS + drills dinámicos) */}
+                      {/* Plantillas por nivel (SRS + drills dinámicos) — bloqueo igual que Practice */}
                       {(() => {
                         const bank = allPatternBank;
-                        const myLevelId = maxTierForLevel(data.level || "advanced"); // 1..4 (mapea 3 niveles de inglés a 4 de patrones)
                         const showEs = data.level !== "advanced";
+                        // desbloqueo: mismo criterio que Practice — 2 patterns completados del nivel anterior
+                        const patternSrs = data.patternSrs || {};
+                        const countDone = (lvl) => Object.values(patternSrs).filter((s) => s.level === lvl && s.reps > 0).length;
+                        const unlockedLvls = [1];
+                        if (countDone(1) >= 2) unlockedLvls.push(2);
+                        if (countDone(2) >= 2) unlockedLvls.push(3);
+                        if (countDone(3) >= 2) unlockedLvls.push(4);
                         const parts = [];
                         for (const lv of PATTERN_LEVELS) {
                           const group = bank.filter((t) => patternAutoLevel(t) === lv.id);
                           if (!group.length) continue;
-                          const unlocked = lv.id <= myLevelId;
-                          const practicedOfLevel = group.filter((t) => data.patternSrs?.[t.id]).length;
+                          const unlocked = unlockedLvls.includes(lv.id);
+                          const practicedOfLevel = countDone(lv.id);
                           parts.push(
                             <div key={lv.id}>
                               <p style={styles.tierLabel}>Nivel {lv.id} — {lv.name} <span style={{ color: "#71807d", fontWeight: 400, textTransform: "none" }}>· {lv.es}</span></p>
@@ -2228,7 +2234,7 @@ export default function VocabGraph() {
                                 <div style={styles.lockedBox}>
                                   <div style={styles.lockedInner}>
                                     <Flame size={16} color="#d98c8c" />
-                                    <span>Se desbloquea al practicar 2 plantillas del nivel {myLevelId} (llevas {practicedOfLevel}).</span>
+                                    <span>Se desbloquea al completar 2 patterns del nivel anterior (llevas {practicedOfLevel}).</span>
                                   </div>
                                 </div>
                               ) : (

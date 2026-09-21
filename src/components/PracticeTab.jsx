@@ -52,29 +52,34 @@ function applyUserEdges(graph) {
   return graph;
 }
 
-// Validación local: la oración tiene que contener las palabras generadas por el pattern
+// Validación local: la oración tiene que contener las palabras del pattern.
+// Pero solo exige lo que EL FRAME del nivel pide (ej. nivel 1 no tiene object).
 function validateLocally(userText, picks, levelId) {
   const low = ` ${userText.toLowerCase().trim()} `;
   const issues = [];
   const need = PATTERN_BY_LEVEL[levelId].needKeys;
 
   if (need.subject && picks.agent) {
-    // el sujeto exacto tiene que aparecer (puede ser "i", "he", "she", "my mom"...)
     const subj = picks.agent.toLowerCase();
-    if (!low.includes(` ${subj}`) && !low.includes(`${subj} '`)) issues.push(`¿Dónde está "${picks.agent}"?`);
+    // "I", "he", "she", "we", "they", "the baby", "my mom"
+    if (!low.includes(` ${subj}`) && !low.includes(`${subj} '`)) {
+      issues.push(`¿Dónde está "${picks.agent}"?`);
+    }
   }
   if (need.verb && picks.verb) {
     const v = picks.verb.toLowerCase();
-    // aceptar "run" | "runs" | "ran" | "is running" | "am running"
+    // aceptar: run, runs, is running, am running, are running, ran
     const variants = [v, v + "s", v + "es", `is ${v}ing`, `am ${v}ing`, `are ${v}ing`];
-    if (!variants.some((x) => low.includes(` ${x} `) || low.includes(` ${x}`) || low.endsWith(x))) {
-      issues.push(`Usa el verbo "${picks.verb}"`);
-    }
+    // para verbos con -e como "take": "takes", "is taking"
+    const withE = v.endsWith("e") ? [v.slice(0, -1) + "ing"] : [];
+    const anyMatch = [...variants, ...withE].some((x) => low.includes(` ${x} `) || low.includes(` ${x}`) || low.endsWith(x));
+    if (!anyMatch) issues.push(`Usa el verbo "${picks.verb}"`);
   }
   if (need.object && picks.object) {
     const o = picks.object.toLowerCase();
     if (!low.includes(o)) issues.push(`Te falta "${picks.object}"`);
   }
+  // time/place opcional: solo validar si existen en picks
   if (need.time && picks.time) {
     const t = picks.time.toLowerCase();
     if (!low.includes(t)) issues.push(`Agrega "${picks.time}" para dar tiempo/lugar`);
@@ -163,13 +168,15 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     }
 
     // 2) validación IA — ahora con las claves exactas para que no acepte cualquier cosa
-    const { agent, verb, object } = exercise.picks;
+    const agent = exercise.picks.subject ?? exercise.picks.agent;
+    const verb = exercise.picks.verb;
+    const object = exercise.picks.object;
     const targetText = exercise.targetText;
     const userText = userSentence.trim();
 
-    const prompt = `The student is learning English. The TARGET pattern is: "${targetText}" (subject="${agent}", verb="${verb}", object="${object}").
+    const prompt = `The student is learning English. The TARGET pattern is: "${targetText}" (subject="${agent}", verb="${verb}"${object ? `, object="${object}"` : ""}).
 The student wrote: "${userText}"
-Is "{userText}" grammatically correct AND does it use the target pattern structure? If the student changed the structure or used a different verb/object than requested, mark as WRONG.
+Is "${userText}" grammatically correct AND does it use the target pattern structure? If the student changed the structure or used different words than the pattern, mark as WRONG.
 Respond with EXACTLY this format:
 CORRECT
 or
@@ -200,7 +207,7 @@ WRONG: <one short Spanish sentence explaining the error, max 12 words>`;
           ...prev,
           patternSrs: {
             ...(prev.patternSrs || {}),
-            [`lvl${activeLevel}-${verb}-${object || "x"}`]: { level: activeLevel, reps: 1, due: Date.now() + 86400000 },
+            [`lvl${activeLevel}-${agent}-${verb}-${object || "x"}`]: { level: activeLevel, reps: 1, due: Date.now() + 86400000 },
           },
         }));
         grantXp(20);
