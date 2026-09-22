@@ -195,8 +195,19 @@ Reply EXACTLY: CORRECT or WRONG: <short Spanish note, max 12 words>`,
           }),
         });
         const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
-        const firstLine = raw.split("\n")[0].trim();
-        return { isCorrect: /^correct/i.test(firstLine), note: firstLine.replace(/^wrong[:\s]*/i, "").trim() || "Revisa la estructura" };
+        // parsing tolerante: el modelo a veces responde "The sentence is CORRECT." o con markdown
+        const clean = raw.replace(/[*_`#>]/g, "").toLowerCase();
+        const hasWrong = /\bwrong|incorrect\b/.test(clean);
+        const hasCorrect = /\bcorrect\b/.test(clean) && !hasWrong;
+        const isCorrect = hasCorrect && !hasWrong;
+        // nota: primera línea útil del modelo (después de quitar "wrong:" o "correct")
+        const note = raw
+          .replace(/[*_`#>]/g, "")
+          .split("\n").map((l) => l.trim()).filter(Boolean)
+          .map((l) => l.replace(/^(correct|wrong)[:\s.—-]*/i, "").trim())
+          .filter((l) => l.length > 3)
+          .join(" ") || "Revisa la estructura";
+        return { isCorrect, note };
       } catch (e) {
         if (maxTry > 0) return aiValidate(maxTry - 1, true); // retry sin force
         throw e;
