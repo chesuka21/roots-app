@@ -54,39 +54,46 @@ function applyUserEdges(graph) {
 
 // Validación local: la oración tiene que contener las palabras del pattern.
 // Pero solo exige lo que EL FRAME del nivel pide (ej. nivel 1 no tiene object).
+// fillPattern usa slot names como "subject"/"agent"/"object" — aquí los mapeamos.
 function validateLocally(userText, picks, levelId) {
   const low = ` ${userText.toLowerCase().trim()} `;
   const issues = [];
   const need = PATTERN_BY_LEVEL[levelId].needKeys;
 
-  if (need.subject && picks.agent) {
-    const subj = picks.agent.toLowerCase();
+  // mapear slots: subject/agent son lo mismo; verb/verb; object/object; time/time; place/place
+  const agentVal = picks.subject ?? picks.agent;
+  const verbVal = picks.verb;
+  const objectVal = picks.object;
+  const timeVal = picks.time;
+  const placeVal = picks.place;
+
+  if (need.subject && agentVal) {
+    const subj = agentVal.toLowerCase();
     // "I", "he", "she", "we", "they", "the baby", "my mom"
     if (!low.includes(` ${subj}`) && !low.includes(`${subj} '`)) {
-      issues.push(`¿Dónde está "${picks.agent}"?`);
+      issues.push(`¿Dónde está "${agentVal}"?`);
     }
   }
-  if (need.verb && picks.verb) {
-    const v = picks.verb.toLowerCase();
+  if (need.verb && verbVal) {
+    const v = verbVal.toLowerCase();
     // aceptar: run, runs, is running, am running, are running, ran
     const variants = [v, v + "s", v + "es", `is ${v}ing`, `am ${v}ing`, `are ${v}ing`];
     // para verbos con -e como "take": "takes", "is taking"
     const withE = v.endsWith("e") ? [v.slice(0, -1) + "ing"] : [];
     const anyMatch = [...variants, ...withE].some((x) => low.includes(` ${x} `) || low.includes(` ${x}`) || low.endsWith(x));
-    if (!anyMatch) issues.push(`Usa el verbo "${picks.verb}"`);
+    if (!anyMatch) issues.push(`Usa el verbo "${verbVal}"`);
   }
-  if (need.object && picks.object) {
-    const o = picks.object.toLowerCase();
-    if (!low.includes(o)) issues.push(`Te falta "${picks.object}"`);
+  if (need.object && objectVal) {
+    const o = objectVal.toLowerCase();
+    if (!low.includes(o)) issues.push(`Te falta "${objectVal}"`);
   }
-  // time/place opcional: solo validar si existen en picks
-  if (need.time && picks.time) {
-    const t = picks.time.toLowerCase();
-    if (!low.includes(t)) issues.push(`Agrega "${picks.time}" para dar tiempo/lugar`);
+  if (need.time && timeVal) {
+    const t = timeVal.toLowerCase();
+    if (!low.includes(t)) issues.push(`Agrega "${timeVal}" para dar tiempo/lugar`);
   }
-  if (need.place && picks.place) {
-    const p = picks.place.toLowerCase();
-    if (!low.includes(p)) issues.push(`Agrega "${picks.place}" como lugar`);
+  if (need.place && placeVal) {
+    const p = placeVal.toLowerCase();
+    if (!low.includes(p)) issues.push(`Agrega "${placeVal}" como lugar`);
   }
   return { ok: issues.length === 0, issues };
 }
@@ -170,40 +177,38 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
       return;
     }
 
-    // 2) validación IA — prompt con SOLO los slots que el ejercicio generó
     const agent = exercise.picks.subject ?? exercise.picks.agent;
     const verb = exercise.picks.verb;
-    const object = exercise.picks.object; // undefined en nivel 1 → no aparece en prompt
-    const targetText = exercise.targetText;
+    const object = exercise.picks.object;
     const userText = userSentence.trim();
-    const slotDesc = [
-      agent && `subject="${agent}"`,
-      verb && `verb="${verb}"`,
-      object && `object="${object}"`,
-    ].filter(Boolean).join(", ");
-    const prompt = `The student is learning English. The TARGET pattern is: "${targetText}" (${slotDesc}).
-The student wrote: "${userText}"
-Is "${userText}" grammatically correct AND does it use the target pattern structure? If the student used different words or changed the structure, mark as WRONG.
-Respond with EXACTLY this format:
-CORRECT
-or
-WRONG: <one short Spanish sentence explaining the error, max 12 words>`;
+
+    // 2) validación IA — prompt con SOLO los slots que el ejercicio generó.
+    // Timeout corto (20s) para no cortar en móvil/lentas; si falla, retry con Groq.
+    async function aiValidate(maxTry = 1) {
+      try {
+        const res = await fetch("/api/claude", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            prompt: `Is "${userText}" grammatically correct English? Answer only: CORRECT or WRONG: <short Spanish note, max 10 words>`,
+            max_tokens: 80,
+            force: "openrouter",
+          }),
+        });
+        const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
+        const firstLine = raw.split("\n")[0].trim();
+        return { isCorrect: /^correct/i.test(firstLine), note: firstLine.replace(/^wrong[:\s]*/i, "").trim() || "Revisa la estructura" };
+      } catch (e) {
+        if (maxTry > 0) return aiValidate(maxTry - 1, true); // retry sin force
+        throw e;
+      }
+    }
 
     try {
-      const res = await fetch("/api/claude", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, max_tokens: 120 }),
-      });
-      const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
-      const firstLine = raw.split("\n")[0].trim();
-      const isCorrect = /^correct/i.test(firstLine);
-      const note = isCorrect
-        ? "✓ Correcto — buena conjugación y estructura"
-        : (firstLine.replace(/^wrong[:\s]*/i, "").trim() || "Revisa la estructura o las palabras del patrón");
+      const { isCorrect, note } = await aiValidate();
 
       if (isCorrect) {
-        setCheckResult({ correct: true, note });
+        setCheckResult({ correct: true, note: "✓ Correcto! Perfecto — buena conjunción." });
         setCompleted(true);
         activateStreak();
         // persistir aristas usadas
@@ -223,7 +228,7 @@ WRONG: <one short Spanish sentence explaining the error, max 12 words>`;
         setCheckResult({ correct: false, note });
       }
     } catch (e) {
-      setCheckResult({ correct: false, note: `Error de conexión: ${e.message || e}` });
+      setCheckResult({ correct: false, note: `No pude validar: ${e.message || "timeout"}. Intenta de nuevo.` });
     }
     setChecking(false);
   };
