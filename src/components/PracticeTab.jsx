@@ -68,20 +68,16 @@ function validateLocally(userText, picks, levelId) {
   const placeVal = picks.place;
 
   if (need.subject && agentVal) {
-    const subj = agentVal.toLowerCase();
-    // "I", "he", "she", "we", "they", "the baby", "my mom"
-    if (!low.includes(` ${subj}`) && !low.includes(`${subj} '`)) {
-      issues.push(`¿Dónde está "${agentVal}"?`);
-    }
+    // El sujeto es LIBRE: cualquier sujeto válido vale ("my dad", "the dog", "she"...)
+    // Solo avisamos si el usuario repitió distinto — la IA decide si es gramática correcta.
   }
   if (need.verb && verbVal) {
     const v = verbVal.toLowerCase();
-    // aceptar: run, runs, is running, am running, are running, ran
-    const variants = [v, v + "s", v + "es", `is ${v}ing`, `am ${v}ing`, `are ${v}ing`];
-    // para verbos con -e como "take": "takes", "is taking"
-    const withE = v.endsWith("e") ? [v.slice(0, -1) + "ing"] : [];
+    // aceptar: run, runs, is running, am running, are running, ran, loved, loving...
+    const variants = [v, v + "s", v + "es", v + "d", v + "ed", v + "ing", `is ${v}ing`, `am ${v}ing`, `are ${v}ing`];
+    const withE = v.endsWith("e") ? [v.slice(0, -1) + "ing", v + "d"] : [];
     const anyMatch = [...variants, ...withE].some((x) => low.includes(` ${x} `) || low.includes(` ${x}`) || low.endsWith(x));
-    if (!anyMatch) issues.push(`Usa el verbo "${verbVal}"`);
+    if (!anyMatch) issues.push(`Debes usar el verbo "${verbVal}"`);
   }
   if (need.object && objectVal) {
     const o = objectVal.toLowerCase();
@@ -190,7 +186,10 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            prompt: `Is "${userText}" grammatically correct English? Answer only: CORRECT or WRONG: <short Spanish note, max 10 words>`,
+            prompt: `English learner must write a sentence using the verb "${verb}" (any conjugation OK)${object ? ` and the object "${object}"` : ""}.
+Student wrote: "${userText}"
+Judge ONLY grammar correctness (conjugation, articles, word order). The subject can be ANY valid one (my dad, she, the dog...) — do NOT reject for a different subject.
+Reply EXACTLY: CORRECT or WRONG: <short Spanish note, max 12 words>`,
             max_tokens: 80,
             force: "openrouter",
           }),
