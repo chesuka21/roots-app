@@ -349,7 +349,7 @@ Rules:
 async function suggestWordsForProfile(profile, existingWords) {
   const existingList = existingWords.map((w) => w.en).join(", ");
   const withInterests = profileInterestsLabel(profile);
-  const context = [profile.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
+  const context = [profile?.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
     .filter(Boolean)
     .join("; ");
   const prompt = `Suggest useful English vocabulary for a learner with this background: ${context || "no background given"}.

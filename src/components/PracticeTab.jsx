@@ -151,7 +151,9 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
       setExercise({ targetText: "Agrega más palabras a tu mapa para practicar este nivel.", picks: {} });
       return;
     }
-    setExercise({ targetText: result.text, picks: result.picks });
+    // Guardar el nivel del ejercicio junto al texto para validación correcta.
+    // Esto resuelve "You eat meat" en nivel 1 (debería ser solo "You eat").
+    setExercise({ targetText: result.text, picks: result.picks, level: levelId });
   };
 
   const checkUserSentence = async () => {
@@ -159,24 +161,29 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     setChecking(true);
     setCheckResult(null);
 
-    // 1) validación local — la oración tiene que usar las palabras del pattern generado
-    const local = validateLocally(userSentence.trim(), exercise.picks, activeLevel);
+    // 1) validación local — usa el nivel DEL EJERCICIO generado (puede ser distinto al
+    // clickeado si el grafo no tenía palabras para ese nivel)
+    const local = validateLocally(userSentence.trim(), exercise.picks, exercise.level || activeLevel);
     if (!local.ok) {
       setCheckResult({ correct: false, note: local.issues.join(" · ") });
       setChecking(false);
       return;
     }
 
-    // 2) validación IA — ahora con las claves exactas para que no acepte cualquier cosa
+    // 2) validación IA — prompt con SOLO los slots que el ejercicio generó
     const agent = exercise.picks.subject ?? exercise.picks.agent;
     const verb = exercise.picks.verb;
-    const object = exercise.picks.object;
+    const object = exercise.picks.object; // undefined en nivel 1 → no aparece en prompt
     const targetText = exercise.targetText;
     const userText = userSentence.trim();
-
-    const prompt = `The student is learning English. The TARGET pattern is: "${targetText}" (subject="${agent}", verb="${verb}"${object ? `, object="${object}"` : ""}).
+    const slotDesc = [
+      agent && `subject="${agent}"`,
+      verb && `verb="${verb}"`,
+      object && `object="${object}"`,
+    ].filter(Boolean).join(", ");
+    const prompt = `The student is learning English. The TARGET pattern is: "${targetText}" (${slotDesc}).
 The student wrote: "${userText}"
-Is "${userText}" grammatically correct AND does it use the target pattern structure? If the student changed the structure or used different words than the pattern, mark as WRONG.
+Is "${userText}" grammatically correct AND does it use the target pattern structure? If the student used different words or changed the structure, mark as WRONG.
 Respond with EXACTLY this format:
 CORRECT
 or
@@ -202,12 +209,13 @@ WRONG: <one short Spanish sentence explaining the error, max 12 words>`;
         // persistir aristas usadas
         if (agent && verb) persistUserEdge(agent, "agent", verb);
         if (verb && object) persistUserEdge(verb, "object", object);
-        // persistir pattern completado
+        // persistir pattern completado (usar exercise.level — el nivel real del ejercicio)
+        const lvlDone = exercise.level || activeLevel;
         setData((prev) => ({
           ...prev,
           patternSrs: {
             ...(prev.patternSrs || {}),
-            [`lvl${activeLevel}-${agent}-${verb}-${object || "x"}`]: { level: activeLevel, reps: 1, due: Date.now() + 86400000 },
+            [`lvl${lvlDone}-${agent}-${verb}-${object || "x"}`]: { level: lvlDone, reps: 1, due: Date.now() + 86400000 },
           },
         }));
         grantXp(20);
