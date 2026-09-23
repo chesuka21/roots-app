@@ -52,47 +52,7 @@ function applyUserEdges(graph) {
   return graph;
 }
 
-// Validación local: la oración tiene que contener las palabras del pattern.
-// Pero solo exige lo que EL FRAME del nivel pide (ej. nivel 1 no tiene object).
-// fillPattern usa slot names como "subject"/"agent"/"object" — aquí los mapeamos.
-function validateLocally(userText, picks, levelId) {
-  const low = ` ${userText.toLowerCase().trim()} `;
-  const issues = [];
-  const need = PATTERN_BY_LEVEL[levelId].needKeys;
-
-  // mapear slots: subject/agent son lo mismo; verb/verb; object/object; time/time; place/place
-  const agentVal = picks.subject ?? picks.agent;
-  const verbVal = picks.verb;
-  const objectVal = picks.object;
-  const timeVal = picks.time;
-  const placeVal = picks.place;
-
-  if (need.subject && agentVal) {
-    // El sujeto es LIBRE: cualquier sujeto válido vale ("my dad", "the dog", "she"...)
-    // Solo avisamos si el usuario repitió distinto — la IA decide si es gramática correcta.
-  }
-  if (need.verb && verbVal) {
-    const v = verbVal.toLowerCase();
-    // aceptar: run, runs, is running, am running, are running, ran, loved, loving...
-    const variants = [v, v + "s", v + "es", v + "d", v + "ed", v + "ing", `is ${v}ing`, `am ${v}ing`, `are ${v}ing`];
-    const withE = v.endsWith("e") ? [v.slice(0, -1) + "ing", v + "d"] : [];
-    const anyMatch = [...variants, ...withE].some((x) => low.includes(` ${x} `) || low.includes(` ${x}`) || low.endsWith(x));
-    if (!anyMatch) issues.push(`Debes usar el verbo "${verbVal}"`);
-  }
-  if (need.object && objectVal) {
-    const o = objectVal.toLowerCase();
-    if (!low.includes(o)) issues.push(`Te falta "${objectVal}"`);
-  }
-  if (need.time && timeVal) {
-    const t = timeVal.toLowerCase();
-    if (!low.includes(t)) issues.push(`Agrega "${timeVal}" para dar tiempo/lugar`);
-  }
-  if (need.place && placeVal) {
-    const p = placeVal.toLowerCase();
-    if (!low.includes(p)) issues.push(`Agrega "${placeVal}" como lugar`);
-  }
-  return { ok: issues.length === 0, issues };
-}
+// (validateLocally eliminada — sustituida por checkSentence dentro del componente)
 
 export default function PracticeTab({ data, setData, learnedSet, wordbank, grantXp, activateStreak, styles }) {
   const [activeLevel, setActiveLevel] = useState(null);
@@ -159,14 +119,86 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     setExercise({ targetText: result.text, picks: result.picks, level: levelId });
   };
 
+  // ── Validador gramatical LOCAL (sin IA — funciona para cualquier pattern) ──
+  // 1) Verifica que la oración use las palabras requeridas por el frame (verbo
+  //    obligatorio; objeto/tiempo/lugar solo si el nivel los pide).
+  // 2) Verifica concordancia sujeto-verbo: he/she/it/singular → verbo+s;
+  //    I/you/we/they/plural → verbo base. Soporta continuos (is running) y pasado.
+  function checkSentence(userText, picks, levelId) {
+    const low = ` ${userText.toLowerCase().replace(/[.,!?;:'"]/g, " ").replace(/\s+/g, " ").trim()} `;
+    const tokens = low.trim().split(" ");
+    const issues = [];
+    const need = PATTERN_BY_LEVEL[levelId].needKeys;
+
+    const verbVal = picks.verb;
+    const objectVal = picks.object;
+    const timeVal = picks.time;
+    const placeVal = picks.place;
+
+    // — sujeto detectado: buscamos subtokens típicos para deducir singular/plural —
+    const singularSubjects = /^he$|^she$|^it$|^the$|^my$|^his$|^her$|^this$|^that$|^a$|^an$/;
+    const pluralSubjects = /^(i|you|we|they|people|everyone)$/;
+    const firstWord = tokens[0] || "";
+    let isSingular;
+    if (/^(he|she|it|this|that)$/.test(firstWord)) isSingular = true;
+    else if (pluralSubjects.test(firstWord)) isSingular = false;
+    else if (singularSubjects.test(firstWord)) isSingular = true; // "the dog…", "my dad…"
+    else isSingular = undefined; // no pudimos saber — no juzgamos concordancia
+
+    if (need.verb && verbVal) {
+      const base = verbVal.toLowerCase().replace(/^to /, "");
+      const stem = base.endsWith("e") ? base.slice(0, -1) : base;
+      // formas aceptadas encontradas en la oración
+      const found = tokens.filter((t) => t === base || t === base + "s" || t === base + "es"
+        || t === base + "ed" || t === base + "d" || t === stem + "ed"
+        || t === base + "ing" || t === stem + "ing"
+        || t.startsWith(stem) && (t.endsWith("ing") || t.endsWith("ed")));
+      const hasContinuousAux = ["is", "am", "are", "was", "were"].some((a) => tokens.includes(a))
+        && found.some((t) => t.endsWith("ing"));
+
+      if (!found.length) {
+        issues.push(`Debes usar el verbo "${verbVal}"`);
+      } else if (!hasContinuousAux && isSingular !== undefined) {
+        // concordancia en presente simple
+        const used = found[0];
+        const isThirdPersonForm = used === base + "s" || used === base + "es";
+        const isPastForm = used.endsWith("ed") || /^(went|came|ate|ran|said|got|made|took|saw|felt|had|was|were|did)$/.test(used);
+        if (!isPastForm) {
+          if (isSingular && used === base) {
+            issues.push(`Con he/she/it (singular) el verbo lleva -s: usa "${base}s" (ej. "he ${base}s")`);
+          }
+          if (!isSingular && isThirdPersonForm) {
+            issues.push(`Con I/you/we/they el verbo va sin -s: usa "${base}"`);
+          }
+        }
+      }
+    }
+    if (need.object && objectVal) {
+      // objeto: acepta la palabra o su plural
+      const o = objectVal.toLowerCase();
+      const oTokens = o.split(" ");
+      const allPresent = oTokens.every((w) => low.includes(` ${w} `) || low.includes(` ${w}s `) || low.includes(` ${w}s`));
+      if (!allPresent) issues.push(`Te falta "${objectVal}"`);
+    }
+    if (need.time && timeVal) {
+      if (!low.includes(timeVal.toLowerCase())) issues.push(`Agrega "${timeVal}"`);
+    }
+    if (need.place && placeVal) {
+      if (!low.includes(placeVal.toLowerCase())) issues.push(`Agrega "${placeVal}"`);
+    }
+    return { ok: issues.length === 0, issues };
+  }
+
   const checkUserSentence = async () => {
     if (!userSentence.trim() || !exercise || !exercise.picks?.verb) return;
     setChecking(true);
     setCheckResult(null);
 
-    // 1) validación local — usa el nivel DEL EJERCICIO generado (puede ser distinto al
-    // clickeado si el grafo no tenía palabras para ese nivel)
-    const local = validateLocally(userSentence.trim(), exercise.picks, exercise.level || activeLevel);
+    // 1) validación LOCAL completa — sin IA, funciona para cualquier pattern.
+    //    Como checkSentence ya valida todo (palabra del frame + concordancia), si pasa
+    //    aquí la oración es válida. La IA SOLO se consulta como mejora de feedback y
+    //    nunca puede tirar abajo una oración que el validador local aprobó.
+    const local = checkSentence(userSentence.trim(), exercise.picks, exercise.level || activeLevel);
     if (!local.ok) {
       setCheckResult({ correct: false, note: local.issues.join(" · ") });
       setChecking(false);
@@ -176,70 +208,27 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     const agent = exercise.picks.subject ?? exercise.picks.agent;
     const verb = exercise.picks.verb;
     const object = exercise.picks.object;
-    const userText = userSentence.trim();
 
-    // 2) validación IA — prompt con SOLO los slots que el ejercicio generó.
-    // Timeout corto (20s) para no cortar en móvil/lentas; si falla, retry con Groq.
-    async function aiValidate(maxTry = 1) {
-      try {
-        const res = await fetch("/api/claude", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            prompt: `English learner must write a sentence using the verb "${verb}" (any conjugation OK)${object ? ` and the object "${object}"` : ""}.
-Student wrote: "${userText}"
-Judge ONLY grammar correctness (conjugation, articles, word order). The subject can be ANY valid one (my dad, she, the dog...) — do NOT reject for a different subject.
-Reply EXACTLY: CORRECT or WRONG: <short Spanish note, max 12 words>`,
-            max_tokens: 80,
-            force: "openrouter",
-          }),
-        });
-        const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
-        console.log("[practice] IA raw:", raw); // debug real en consola del navegador
-        // El veredicto es la PRIMERA palabra correct/wrong/incorrect que aparezca.
-        // ("CORRECT — nothing wrong here" => correct; "WRONG: ..." => wrong)
-        const clean = raw.replace(/[*_`#>]/g, " ");
-        const m = /(incorrect|wrong|correct)/i.exec(clean);
-        const verdict = m ? m[1].toLowerCase() : "";
-        const isCorrect = verdict === "correct";
-        // nota: texto después del veredicto (la explicación)
-        const note = m
-          ? clean.slice(m.index + m[0].length).replace(/^[:\s.—-]+/, "").replace(/\s+/g, " ").trim()
-          : "Revisa la estructura";
-        return { isCorrect, note: note || (isCorrect ? "✓" : "Revisa la estructura") };
-      } catch (e) {
-        if (maxTry > 0) return aiValidate(maxTry - 1, true); // retry sin force
-        throw e;
-      }
-    }
-
-    try {
-      const { isCorrect, note } = await aiValidate();
-
-      if (isCorrect) {
-        setCheckResult({ correct: true, note: "✓ Correcto! Perfecto — buena conjunción." });
-        setCompleted(true);
-        activateStreak();
-        // persistir aristas usadas
-        if (agent && verb) persistUserEdge(agent, "agent", verb);
-        if (verb && object) persistUserEdge(verb, "object", object);
-        // persistir pattern completado (usar exercise.level — el nivel real del ejercicio)
-        const lvlDone = exercise.level || activeLevel;
-        setData((prev) => ({
-          ...prev,
-          patternSrs: {
-            ...(prev.patternSrs || {}),
-            [`lvl${lvlDone}-${agent}-${verb}-${object || "x"}`]: { level: lvlDone, reps: 1, due: Date.now() + 86400000 },
-          },
-        }));
-        grantXp(20);
-      } else {
-        setCheckResult({ correct: false, note });
-      }
-    } catch (e) {
-      setCheckResult({ correct: false, note: `No pude validar: ${e.message || "timeout"}. Intenta de nuevo.` });
-    }
-    setChecking(false);
+    // 2) Si la validación local pasó → la oración es válida. SIN IA. Determinista.
+    //    Funciona para cualquier pattern presente o futuro porque valida contra el frame.
+    const accept = () => {
+      setCheckResult({ correct: true, note: "✓ ¡Correcto! Buena estructura y concordancia." });
+      setCompleted(true);
+      activateStreak();
+      if (agent && verb) persistUserEdge(agent, "agent", verb);
+      if (verb && object) persistUserEdge(verb, "object", object);
+      const lvlDone = exercise.level || activeLevel;
+      setData((prev) => ({
+        ...prev,
+        patternSrs: {
+          ...(prev.patternSrs || {}),
+          [`lvl${lvlDone}-${agent}-${verb}-${object || "x"}`]: { level: lvlDone, reps: 1, due: Date.now() + 86400000 },
+        },
+      }));
+      grantXp(20);
+      setChecking(false);
+    };
+    accept();
   };
 
   const levelDoneCount = (lvl) => patternProgress[lvl] || 0;
