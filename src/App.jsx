@@ -113,6 +113,14 @@ function extractJson(text) {
   const t = String(text || "").trim();
   try { return JSON.parse(t); } catch (e) { /* intentar reparación abajo */ }
   try { return JSON.parse(repairJson(t)); } catch (e) { /* reintentar fuera */ }
+  // último intento: arreglo brackets/braces desbalanceados (la IA a veces no los cierra)
+  let s = repairJson(t);
+  // arreglo de strings: si está truncado a mitad, cerramos la cadena actual
+  const braceCount = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
+  if (braceCount > 0) s += "}".repeat(braceCount);
+  const bracketCount = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
+  if (bracketCount > 0) s += "]".repeat(bracketCount);
+  try { return JSON.parse(s); } catch (e) { /* nada más que hacer */ }
   throw new Error("La IA devolvió un formato inválido — intenta de nuevo.");
 }
 // Regla extra que se añade solo en los reintentos (no gasta tokens en el intento normal)
@@ -990,6 +998,8 @@ export default function VocabGraph() {
   const [phraseResult, setPhraseResult] = useState(null);
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [suggestResults, setSuggestResults] = useState(null);
+  const [suggestChecked, setSuggestChecked] = useState(new Set());
+  const [suggestBatch, setSuggestBatch] = useState([]);
   const [idiomText, setIdiomText] = useState("");
   const [idiomBusy, setIdiomBusy] = useState(false);
   const [idiomResult, setIdiomResult] = useState(null);
@@ -2349,11 +2359,14 @@ export default function VocabGraph() {
                         <label style={styles.label}>Suggested for you (based on {currentInterests.slice(0, 4).join(", ") || data.profile?.job || "your vocabulary"})</label>
                         <p style={styles.formHint}>The AI mixes your interests with the words you already know to propose the next useful ones.</p>
                         <button
+                data-suggest-btn="true"
                 style={styles.genBtn}
                 disabled={suggestBusy}
                 onClick={async () => {
                   setSuggestBusy(true);
                   setSuggestResults(null);
+                  setSuggestChecked(new Set());
+                  setSuggestBatch([]);
                   try {
                     const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
                     const result = await suggestWordsForProfile(data.profile, existingWords);
@@ -2367,17 +2380,68 @@ export default function VocabGraph() {
                 {suggestBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
                 {suggestBusy ? "Thinking…" : "Suggest words for me"}
               </button>
-              {suggestBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
-              {suggestResults && suggestResults.map((r, i) => (
-                r.word ? (
-                  <button key={i} style={styles.lookupResult} onClick={() => { setForm((f) => ({ ...f, word: r.word })); setSuggestResults(null); }}>
-                    <span style={styles.lookupWord}>{r.word}</span>
-                    <span style={styles.lookupWhy}>{r.why}</span>
-                  </button>
-                ) : (
-                  <p key={i} style={styles.genError}>{r.why}</p>
-                )
-              ))}
+              {/* Checkboxes para agregar varias de una vez */}
+              {suggestResults && suggestResults.length > 0 && suggestResults[0].word && (
+                <div style={{ marginTop: 10 }}>
+                  {suggestResults.map((r, i) =>
+                    r.word ? (
+                      <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={suggestChecked.has(r.word)}
+                          onChange={(e) => {
+                            const newSet = new Set(suggestChecked);
+                            if (e.target.checked) newSet.add(r.word);
+                            else newSet.delete(r.word);
+                            setSuggestChecked(newSet);
+                          }}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <span style={{ fontWeight: 700, color: "#cfe3d8" }}>{r.word}</span>
+                          <span style={{ color: "#71807d", marginLeft: 6, fontSize: 13 }}>{r.why}</span>
+                        </div>
+                      </label>
+                    ) : null
+                  )}
+                  <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                    <button
+                      style={styles.genBtn}
+                      disabled={suggestChecked.size === 0}
+                      onClick={() => {
+                        if (suggestChecked.size >= 1) {
+                          const words = [...suggestChecked];
+                          setForm((f) => ({ ...f, word: words[0] }));
+                          setSuggestBatch(words.slice(1));
+                          setSuggestResults(null);
+                          setSuggestChecked(new Set());
+                        }
+                      }}
+                    >
+                      <Check size={14} /> Add selected ({suggestChecked.size})
+                    </button>
+                    <button
+                      style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
+                      onClick={() => {
+                        // refresh: nueva tanda
+                        setSuggestResults(null);
+                        setSuggestChecked(new Set());
+                        setSuggestBatch([]);
+                        // disparamos la misma función del botón principal (simular click)
+                        const btn = document.querySelector('[data-suggest-btn="true"]');
+                        if (btn) btn.click();
+                      }}
+                    >
+                      ⭮ Refresh
+                    </button>
+                  </div>
+                  {/* Aviso si hay palabras en cola después de seleccionar varias */}
+                  {suggestBatch.length > 0 && (
+                    <p style={{ ...styles.formHint, marginTop: 6, color: "#9fd9b8" }}>
+                      Also add later: {suggestBatch.join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
