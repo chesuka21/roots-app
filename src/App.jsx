@@ -126,7 +126,13 @@ async function callClaudeJson(prompt, max_tokens) {
       return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true));
     } catch (e2) {
       // 3er intento: OTRO proveedor (Gemini piensa distinto y suele formatear mejor)
-      return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "gemini"));
+      // ...pero si Gemini está en quota (es free con 5 req/día), probamos Groq/OpenRouter
+      try {
+        return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "gemini"));
+      } catch (e3) {
+        if (/quota|429|resource/i.test(e3.message)) return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "openrouter"));
+        throw e3;
+      }
     }
   }
 }
@@ -1625,14 +1631,18 @@ export default function VocabGraph() {
         const allPatterns = [...profilePatterns.filter((p) => !customPatterns.some((c) => c.en === p.en)), ...customPatterns];
         const duePatterns = allPatterns.filter((p) => { const c = data.patternSrs?.[p.id]; return c && c.due <= Date.now(); });
 
+  // Solo palabras que SIGUEN en el mapa (si borraste "school", no aparece en review)
   const dueIds = [...learnedSet]
+    .filter((id) => data.nodes?.[id] !== undefined)
     .filter((id) => (data.srs?.[id]?.due ?? 0) <= Date.now())
     .sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
   const doneToday = data.reviewedToday?.date === todayKey() ? data.reviewedToday.count : 0;
   const remainingCapToday = Math.max(0, DAILY_REVIEW_CAP - doneToday);
   const dueCount = dueIds.length;
   const dueQueueIds = dueIds.slice(0, remainingCapToday);
-  const practiceQueueIds = [...learnedSet].sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
+  const practiceQueueIds = [...learnedSet]
+    .filter((id) => data.nodes?.[id] !== undefined)
+    .sort((a, b) => (data.srs?.[a]?.due ?? 0) - (data.srs?.[b]?.due ?? 0));
 
   return (
     <div style={styles.app}>

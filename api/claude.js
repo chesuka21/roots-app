@@ -141,6 +141,8 @@ async function callGroq(prompt, maxTokens) {
 
 async function callGemini(prompt, maxTokens) {
   const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  // Dejamos pasar el error 429 con mensaje útil (quotas exhausted);
+  // no es un bug, es free tier de Gemini con 5 req/día.
   const r = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
@@ -151,10 +153,15 @@ async function callGemini(prompt, maxTokens) {
         generationConfig: { temperature: 0.2, maxOutputTokens: Math.min(maxTokens || 400, 1200) },
       }),
     },
-    9000 // Gemini también bajo el límite de Vercel Hobby
+    9000
   );
   const data = await r.json();
-  if (!r.ok) throw new Error(data?.error?.message || `Gemini error ${r.status}`);
+  if (!r.ok) {
+    const msg = data?.error?.message || `Gemini error ${r.status}`;
+    throw new Error(msg.includes("quota") || msg.includes("429")
+      ? "Gemini free quota exhausted — espera y usa otro proveedor (Groq/OpenRouter)"
+      : msg);
+  }
   const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text).join("");
   return cleanJson(text);
 }
