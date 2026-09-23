@@ -195,19 +195,18 @@ Reply EXACTLY: CORRECT or WRONG: <short Spanish note, max 12 words>`,
           }),
         });
         const raw = (await res.json())?.content?.[0]?.text?.trim() || "";
-        // parsing tolerante: el modelo a veces responde "The sentence is CORRECT." o con markdown
-        const clean = raw.replace(/[*_`#>]/g, "").toLowerCase();
-        const hasWrong = /\bwrong|incorrect\b/.test(clean);
-        const hasCorrect = /\bcorrect\b/.test(clean) && !hasWrong;
-        const isCorrect = hasCorrect && !hasWrong;
-        // nota: primera línea útil del modelo (después de quitar "wrong:" o "correct")
-        const note = raw
-          .replace(/[*_`#>]/g, "")
-          .split("\n").map((l) => l.trim()).filter(Boolean)
-          .map((l) => l.replace(/^(correct|wrong)[:\s.—-]*/i, "").trim())
-          .filter((l) => l.length > 3)
-          .join(" ") || "Revisa la estructura";
-        return { isCorrect, note };
+        console.log("[practice] IA raw:", raw); // debug real en consola del navegador
+        // El veredicto es la PRIMERA palabra correct/wrong/incorrect que aparezca.
+        // ("CORRECT — nothing wrong here" => correct; "WRONG: ..." => wrong)
+        const clean = raw.replace(/[*_`#>]/g, " ");
+        const m = /(incorrect|wrong|correct)/i.exec(clean);
+        const verdict = m ? m[1].toLowerCase() : "";
+        const isCorrect = verdict === "correct";
+        // nota: texto después del veredicto (la explicación)
+        const note = m
+          ? clean.slice(m.index + m[0].length).replace(/^[:\s.—-]+/, "").replace(/\s+/g, " ").trim()
+          : "Revisa la estructura";
+        return { isCorrect, note: note || (isCorrect ? "✓" : "Revisa la estructura") };
       } catch (e) {
         if (maxTry > 0) return aiValidate(maxTry - 1, true); // retry sin force
         throw e;
