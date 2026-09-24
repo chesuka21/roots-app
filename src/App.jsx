@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
+import TOP_WORDS from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
@@ -361,21 +362,36 @@ Rules:
 }
 
 async function suggestWordsForProfile(profile, existingWords, excludeWords = []) {
-  const existingList = existingWords.map((w) => w.en).join(", ");
   const withInterests = profileInterestsLabel(profile);
   const context = [profile?.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
     .filter(Boolean)
     .join("; ");
-  const excludeList = excludeWords.length ? `\nAlso do NOT suggest these (already shown declined): ${excludeWords.join(", ")}` : "";
-  const prompt = `Suggest useful English vocabulary for a learner with this background: ${context || "no background given"}.
-Words they already have (don't repeat these): ${existingList || "(none yet)"}${excludeList}
 
-Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+  // ── Selección local desde el top-1000: excluimos lo que ya tiene + lo ya sugerido ──
+  // Así cada refresh da palabras NUEVAS, garantizado, sin depender del antojo de la IA.
+  const owned = new Set(existingWords.map((w) => String(w.en || w).toLowerCase()));
+  const seen = new Set(excludeWords.map((w) => String(w).toLowerCase()));
+  const pool = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
+  if (pool.length < 5) {
+    return { suggestions: [{ word: "", why: "¡Ya tienes casi todo el top-1000! Increíble — añade palabras propias." }] };
+  }
+  // barajar (Fisher-Yates) y tomar 12 candidatos para que la IA elija 5
+  const shuffled = [...pool];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const candidates = shuffled.slice(0, 12).join(", ");
+
+  const prompt = `An English learner has this profile: ${context || "no background given"}.
+From this candidate list (pick ONLY from here): ${candidates}
+Choose the 5 most useful words for THEM personally.
+
+Return ONLY valid JSON, no markdown, in this exact shape:
 {"suggestions": [{"word": "...", "why": "..."}]}
 
 Rules:
-- "suggestions": exactly 5 words relevant to their job/interests, not already in their list.
-- "word": lowercase, single common English word (no phrases).
+- "word": MUST be one of the candidates, exactly as written (lowercase).
 - "why": under 10 words, why it's useful for them specifically.`;
   return callClaudeJson(prompt, 500);
 }
@@ -2369,7 +2385,10 @@ export default function VocabGraph() {
                   setSuggestBatch([]);
                   try {
                     const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
-                    const result = await suggestWordsForProfile(data.profile, existingWords);
+                    const result = await suggestWordsForProfile(data.profile, existingWords, data.suggestSeen || []);
+                    // persistir lo mostrado para que futuros refresh den palabras nuevas
+                    const newSeen = [...(data.suggestSeen || []), ...(result.suggestions || []).map((s) => s.word).filter(Boolean)];
+                    setData((prev) => ({ ...prev, suggestSeen: [...new Set(newSeen)] }));
                     setSuggestResults(result.suggestions || []);
                   } catch (e) {
                     setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
@@ -2423,17 +2442,14 @@ export default function VocabGraph() {
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
                       disabled={suggestBusy}
                       onClick={() => {
-                        // Refresh: excluye las ya sugeridas (para que la IA dé palabras distintas)
-                        // + bypass de caché (si no, siempre devuelve las mismas)
-                        const seen = new Set([
-                          ...(suggestResults || []).map((r) => r.word).filter(Boolean),
-                          ...suggestBatch,
-                        ]);
+                        if (suggestBusy) return;
                         setSuggestResults(null);
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
                         setSuggestBusy(true);
-                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en })), [...seen]).then((result) => {
+                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en })), data.suggestSeen || []).then((result) => {
+                          const newSeen = [...(data.suggestSeen || []), ...(result.suggestions || []).map((s) => s.word).filter(Boolean)];
+                          setData((prev) => ({ ...prev, suggestSeen: [...new Set(newSeen)] }));
                           setSuggestResults(result.suggestions || []);
                           setSuggestBusy(false);
                         }).catch((e) => {

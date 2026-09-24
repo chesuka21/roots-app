@@ -124,7 +124,7 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
   //    obligatorio; objeto/tiempo/lugar solo si el nivel los pide).
   // 2) Verifica concordancia sujeto-verbo: he/she/it/singular → verbo+s;
   //    I/you/we/they/plural → verbo base. Soporta continuos (is running) y pasado.
-  function checkSentence(userText, picks, levelId) {
+  function checkSentence(userText, picks, levelId, exerciseTarget) {
     const low = ` ${userText.toLowerCase().replace(/[.,!?;:'"]/g, " ").replace(/\s+/g, " ").trim()} `;
     const tokens = low.trim().split(" ");
     const issues = [];
@@ -157,34 +157,32 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
         && found.some((t) => t.endsWith("ing"));
 
       if (!found.length) {
-        issues.push(`Debes usar el verbo "${verbVal}"`);
+        issues.push(`Debes usar el verbo "${verbVal}" (el patrón es "${exerciseTarget || "[Subject] + " + verbVal}"). Ejemplo: "${(firstWord && /^[a-z]/.test(firstWord) ? firstWord : "I")} ${base}${isSingular ? "s" : ""}".`);
       } else if (!hasContinuousAux && isSingular !== undefined) {
-        // concordancia en presente simple
         const used = found[0];
         const isThirdPersonForm = used === base + "s" || used === base + "es";
-        const isPastForm = used.endsWith("ed") || /^(went|came|ate|ran|said|got|made|took|saw|felt|had|was|were|did)$/.test(used);
+        const isPastForm = /ed$/.test(used) || /^(went|came|ate|ran|said|got|made|took|saw|felt|had|was|were|did)$/.test(used);
         if (!isPastForm) {
           if (isSingular && used === base) {
-            issues.push(`Con he/she/it (singular) el verbo lleva -s: usa "${base}s" (ej. "he ${base}s")`);
+            issues.push(`Con he/she/it (singular) el verbo lleva -s. Cambia "${used}" → "${base}s" (ej. "he ${base}s").`);
           }
           if (!isSingular && isThirdPersonForm) {
-            issues.push(`Con I/you/we/they el verbo va sin -s: usa "${base}"`);
+            issues.push(`Con I/you/we/they el verbo va sin -s. Cambia "${used}" → "${base}" (ej. "${firstWord} ${base}").`);
           }
         }
       }
     }
     if (need.object && objectVal) {
-      // objeto: acepta la palabra o su plural
       const o = objectVal.toLowerCase();
       const oTokens = o.split(" ");
       const allPresent = oTokens.every((w) => low.includes(` ${w} `) || low.includes(` ${w}s `) || low.includes(` ${w}s`));
-      if (!allPresent) issues.push(`Te falta "${objectVal}"`);
+      if (!allPresent) issues.push(`Este patrón pide objeto después del verbo: agrega "${objectVal}" (ej. "[Subject] ${verbVal} ${objectVal}").`);
     }
     if (need.time && timeVal) {
-      if (!low.includes(timeVal.toLowerCase())) issues.push(`Agrega "${timeVal}"`);
+      if (!low.includes(timeVal.toLowerCase())) issues.push(`Falta el tiempo/lugar del patrón: agrega "${timeVal}" al final.`);
     }
     if (need.place && placeVal) {
-      if (!low.includes(placeVal.toLowerCase())) issues.push(`Agrega "${placeVal}"`);
+      if (!low.includes(placeVal.toLowerCase())) issues.push(`Falta el lugar del patrón: agrega "${placeVal}".`);
     }
     return { ok: issues.length === 0, issues };
   }
@@ -198,7 +196,7 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     //    Como checkSentence ya valida todo (palabra del frame + concordancia), si pasa
     //    aquí la oración es válida. La IA SOLO se consulta como mejora de feedback y
     //    nunca puede tirar abajo una oración que el validador local aprobó.
-    const local = checkSentence(userSentence.trim(), exercise.picks, exercise.level || activeLevel);
+    const local = checkSentence(userSentence.trim(), exercise.picks, exercise.level || activeLevel, exercise.targetText);
     if (!local.ok) {
       setCheckResult({ correct: false, note: local.issues.join(" · ") });
       setChecking(false);

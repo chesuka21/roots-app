@@ -1,0 +1,5 @@
+{
+  "//": "Caché compartida de respuestas de la IA (hash de prompt → respuesta).",
+  "//2": "Se rellena automáticamente en local/persistente. En Vercel prod usa /tmp por instancia; para compartir entre TODOS los usuarios, añade UPSTASH_REDIS_REST_URL/TOKEN y cambia persistCache a ese KV.",
+  "514e27c201739306d112b88b89a1bc73d79d9283abe0d87c3918918a884ac9b8": "Hola desde la cache compartida"
+}
