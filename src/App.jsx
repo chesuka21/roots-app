@@ -360,14 +360,15 @@ Rules:
   return callClaudeJson(prompt, 400);
 }
 
-async function suggestWordsForProfile(profile, existingWords) {
+async function suggestWordsForProfile(profile, existingWords, excludeWords = []) {
   const existingList = existingWords.map((w) => w.en).join(", ");
   const withInterests = profileInterestsLabel(profile);
   const context = [profile?.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
     .filter(Boolean)
     .join("; ");
+  const excludeList = excludeWords.length ? `\nAlso do NOT suggest these (already shown declined): ${excludeWords.join(", ")}` : "";
   const prompt = `Suggest useful English vocabulary for a learner with this background: ${context || "no background given"}.
-Words they already have (don't repeat these): ${existingList || "(none yet)"}
+Words they already have (don't repeat these): ${existingList || "(none yet)"}${excludeList}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
 {"suggestions": [{"word": "...", "why": "..."}]}
@@ -2422,18 +2423,20 @@ export default function VocabGraph() {
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
                       disabled={suggestBusy}
                       onClick={() => {
-                        // Refresh — no bloqueado por suggestBusy (puede quedar stuck del botón principal)
+                        // Refresh: excluye las ya sugeridas (para que la IA dé palabras distintas)
+                        // + bypass de caché (si no, siempre devuelve las mismas)
+                        const seen = new Set([
+                          ...(suggestResults || []).map((r) => r.word).filter(Boolean),
+                          ...suggestBatch,
+                        ]);
                         setSuggestResults(null);
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
                         setSuggestBusy(true);
-                        console.log("[refresh] pidiendo sugerencias...");
-                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en }))).then((result) => {
-                          console.log("[refresh] ok:", result);
+                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en })), [...seen]).then((result) => {
                           setSuggestResults(result.suggestions || []);
                           setSuggestBusy(false);
                         }).catch((e) => {
-                          console.error("[refresh] error:", e);
                           setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
                           setSuggestBusy(false);
                         });
