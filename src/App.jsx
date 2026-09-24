@@ -2422,15 +2422,18 @@ export default function VocabGraph() {
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
                       disabled={suggestBusy}
                       onClick={() => {
-                        if (suggestBusy) return; // no permitir double-click
+                        // Refresh — no bloqueado por suggestBusy (puede quedar stuck del botón principal)
                         setSuggestResults(null);
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
                         setSuggestBusy(true);
+                        console.log("[refresh] pidiendo sugerencias...");
                         suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en }))).then((result) => {
+                          console.log("[refresh] ok:", result);
                           setSuggestResults(result.suggestions || []);
                           setSuggestBusy(false);
                         }).catch((e) => {
+                          console.error("[refresh] error:", e);
                           setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
                           setSuggestBusy(false);
                         });
