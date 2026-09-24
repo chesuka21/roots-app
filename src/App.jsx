@@ -2359,7 +2359,6 @@ export default function VocabGraph() {
                         <label style={styles.label}>Suggested for you (based on {currentInterests.slice(0, 4).join(", ") || data.profile?.job || "your vocabulary"})</label>
                         <p style={styles.formHint}>The AI mixes your interests with the words you already know to propose the next useful ones.</p>
                         <button
-                data-suggest-btn="true"
                 style={styles.genBtn}
                 disabled={suggestBusy}
                 onClick={async () => {
@@ -2378,7 +2377,7 @@ export default function VocabGraph() {
                 }}
               >
                 {suggestBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-                {suggestBusy ? "Thinking…" : "Suggest words for me"}
+                {suggestBusy ? "Thinking…" : suggestResults ? "Suggest again" : "Suggest words for me"}
               </button>
               {/* Checkboxes para agregar varias de una vez */}
               {suggestResults && suggestResults.length > 0 && suggestResults[0].word && (
@@ -2421,17 +2420,24 @@ export default function VocabGraph() {
                     </button>
                     <button
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
-                      onClick={() => {
-                        // refresh: nueva tanda
+                      disabled={suggestBusy}
+                      onClick={async () => {
+                        // Refresh: nueva tanda de sugerencias (llama a la misma lógica del botón principal)
+                        setSuggestBusy(true);
                         setSuggestResults(null);
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
-                        // disparamos la misma función del botón principal (simular click)
-                        const btn = document.querySelector('[data-suggest-btn="true"]');
-                        if (btn) btn.click();
+                        try {
+                          const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
+                          const result = await suggestWordsForProfile(data.profile, existingWords);
+                          setSuggestResults(result.suggestions || []);
+                        } catch (e) {
+                          setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
+                        }
+                        setSuggestBusy(false);
                       }}
                     >
-                      ⭮ Refresh
+                      {suggestBusy ? <Loader2 size={14} className="spin" /> : <span>⭮ Refresh</span>}
                     </button>
                   </div>
                   {/* Aviso si hay palabras en cola después de seleccionar varias */}
