@@ -2421,20 +2421,19 @@ export default function VocabGraph() {
                     <button
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
                       disabled={suggestBusy}
-                      onClick={async () => {
-                        // Refresh: nueva tanda de sugerencias (llama a la misma lógica del botón principal)
-                        setSuggestBusy(true);
+                      onClick={() => {
+                        if (suggestBusy) return; // no permitir double-click
                         setSuggestResults(null);
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
-                        try {
-                          const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
-                          const result = await suggestWordsForProfile(data.profile, existingWords);
+                        setSuggestBusy(true);
+                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en }))).then((result) => {
                           setSuggestResults(result.suggestions || []);
-                        } catch (e) {
+                          setSuggestBusy(false);
+                        }).catch((e) => {
                           setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
-                        }
-                        setSuggestBusy(false);
+                          setSuggestBusy(false);
+                        });
                       }}
                     >
                       {suggestBusy ? <Loader2 size={14} className="spin" /> : <span>⭮ Refresh</span>}
