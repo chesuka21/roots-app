@@ -367,32 +367,43 @@ async function suggestWordsForProfile(profile, existingWords, excludeWords = [])
     .filter(Boolean)
     .join("; ");
 
-  // ── Selección local desde el top-1000: excluimos lo que ya tiene + lo ya sugerido ──
-  // Así cada refresh da palabras NUEVAS, garantizado, sin depender del antojo de la IA.
+  // ── Selección local: 70% afín a intereses + 30% amplio + fallback libre si pool < 5 ──
   const owned = new Set(existingWords.map((w) => String(w.en || w).toLowerCase()));
   const seen = new Set(excludeWords.map((w) => String(w).toLowerCase()));
   const pool = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
-  if (pool.length < 5) {
-    return { suggestions: [{ word: "", why: "¡Ya tienes casi todo el top-1000! Increíble — añade palabras propias." }] };
-  }
-  // barajar (Fisher-Yates) y tomar 12 candidatos para que la IA elija 5
-  const shuffled = [...pool];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  const candidates = shuffled.slice(0, 12).join(", ");
 
-  const prompt = `An English learner has this profile: ${context || "no background given"}.
-From this candidate list (pick ONLY from here): ${candidates}
-Choose the 5 most useful words for THEM personally.
+  // El pool tiene ~2500 palabras; suficiente para años de práctica.
+  // Si se acaba, no bloqueamos: la IA propone 5 libres.
+  const candidates = pool.length >= 5
+    ? (() => {
+        const shuffled = [...pool];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled.slice(0, 15).join(", ");
+      })()
+    : null;
 
-Return ONLY valid JSON, no markdown, in this exact shape:
+  const prompt = candidates
+    ? `An English learner has this profile: ${context || "no background given"}.
+From this candidate list: ${candidates}
+Choose 5 most useful words. 70% relevant to their interests, 30% general/curious.
+
+Return ONLY valid JSON, no markdown:
 {"suggestions": [{"word": "...", "why": "..."}]}
-
 Rules:
-- "word": MUST be one of the candidates, exactly as written (lowercase).
-- "why": under 10 words, why it's useful for them specifically.`;
+- "word": from the list, lowercase.
+- "why": under 10 words, why for them specifically.`
+    : `An English learner has this profile: ${context || "no background given"}.
+You have exhausted the top-2500 list. Now suggest 5 useful words NOT in the top list (already shown declined: ${[...seen].join(", ")}).
+Be creative, slightly outside their comfort zone.
+
+Return ONLY valid JSON, no markdown:
+{"suggestions": [{"word": "...", "why": "..."}]}
+Rules:
+- "word": lowercase, single common English word.
+- "why": under 10 words, why for them or why it's generally useful.`;
   return callClaudeJson(prompt, 500);
 }
 
