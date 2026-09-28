@@ -5,6 +5,7 @@ import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, L
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
+import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Groq/Gemini and
@@ -930,7 +931,7 @@ function buildGraphData() {
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
-    return { nodes, edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, progression: initProgression() };
+    return { nodes: ensurePatternNodes(nodes), edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, cefr: null, progression: initProgression() };
 }
 
 /* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
@@ -1197,6 +1198,10 @@ export default function VocabGraph() {
                   // Migración legacy: datos guardados antes del sistema de progresión
                   // no tienen `progression` — se inicializa en fresco sin tocar lo demás.
                   if (!initial.progression) initial.progression = initProgression();
+                  // Migración Pattern Nodes: inyectar los nodos de patrones y la
+                  // clave `cefr` en datos viejos sin romper lo ya guardado.
+                  initial.nodes = ensurePatternNodes(initial.nodes);
+                  if (!initial.cefr) initial.cefr = initial.level ? TIER_TO_CEFR[initial.level] || "A2" : null;
                 }
       }
     } catch (e) {
@@ -1240,12 +1245,18 @@ export default function VocabGraph() {
     const prevPos = {};
     if (simRef.current) simRef.current.nodeData.forEach((n) => (prevPos[n.id] = { x: n.x, y: n.y }));
 
-    const nodeData = ids.map((id) => ({
+    // Pattern Nodes: los patterns NO entran en la simulación física — se
+    // renderizan en una órbita fija alrededor del mapa (ver render abajo).
+    const wordIds = ids.filter((id) => data.nodes[id]?.kind !== "pattern");
+    const nodeData = wordIds.map((id) => ({
       ...data.nodes[id],
       x: prevPos[id]?.x ?? w / 2 + (Math.random() - 0.5) * 40,
       y: prevPos[id]?.y ?? h / 2 + (Math.random() - 0.5) * 40,
     }));
-    const linkData = data.edges.map((e) => ({ ...e }));
+    // aristas solo entre nodos de vocabulario (las pattern↔word se dibujan aparte)
+    const linkData = data.edges
+      .filter((e) => data.nodes[e.source]?.kind !== "pattern" && data.nodes[e.target]?.kind !== "pattern")
+      .map((e) => ({ ...e }));
 
     if (simRef.current) simRef.current.sim.stop();
 
@@ -1604,6 +1615,12 @@ export default function VocabGraph() {
       const newEdges = form.connections
         .filter((c) => c.checked)
         .map((c) => ({ source: id, target: c.targetId, sentence: c.sentence }));
+      // Pattern Nodes: vincular la palabra nueva a sus patterns según el CEFR
+      // del onboarding (avanzados → solo estructuras B2/C1/C2).
+      const userCefr = prev.cefr || TIER_TO_CEFR[prev.level] || "A2";
+      for (const e of linkWordToPatterns(nodes[id], userCefr)) {
+        if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
+      }
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
     setForm({ word: "", def: "", defEs: "", literal: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
@@ -1688,7 +1705,21 @@ export default function VocabGraph() {
   if (!data.onboarded) {
     return (
       <Onboarding
-        onFinish={(level, profile) => setData((prev) => ({ ...prev, level, profile, onboarded: true }))}
+        onFinish={(level, profile) => setData((prev) => {
+          // CEFR real derivado del onboarding: nivel self-report + ajuste del quiz.
+          // Avanzados pueden afinar su sub-nivel (B2/C1/C2) en Ajustes después.
+          const cefr = TIER_TO_CEFR[level] || "A2";
+          const nodes = ensurePatternNodes(prev.nodes);
+          // Vincular cada palabra ya en el mapa a sus patterns según el nivel detectado.
+          const newEdges = [...prev.edges];
+          for (const w of Object.values(nodes)) {
+            if (w.kind === "pattern") continue;
+            for (const e of linkWordToPatterns(w, cefr)) {
+              if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
+            }
+          }
+          return { ...prev, level, profile, onboarded: true, cefr, nodes, edges: newEdges };
+        })}
       />
     );
   }
@@ -1703,6 +1734,25 @@ export default function VocabGraph() {
     if (a) degreeMap[a] = (degreeMap[a] || 0) + 1;
     if (b) degreeMap[b] = (degreeMap[b] || 0) + 1;
   });
+  // Pattern Nodes: los patterns visibles según el CEFR del usuario (en el mapa
+  // SOLO se muestran los del techo del nivel; el resto queda oculto).
+  const userCefrNow = data?.cefr || TIER_TO_CEFR[data?.level] || "A2";
+  const visiblePatternIds = new Set(patternsForCefr(userCefrNow).map((p) => p.id));
+  // Posición fija en anillo alrededor del mapa para cada pattern visible
+  // (los patterns no entran en la simulación física de d3).
+  const patternNodePositions = (() => {
+    const visible = PATTERN_NODES.filter((p) => visiblePatternIds.has(p.id));
+    const cx = dimsRef.current.w / 2;
+    const cy = dimsRef.current.h / 2;
+    const radiusX = dimsRef.current.w / 2 - 60;
+    const radiusY = dimsRef.current.h / 2 - 60;
+    const positions = {};
+    visible.forEach((p, i) => {
+      const angle = (i / Math.max(1, visible.length)) * 2 * Math.PI - Math.PI / 2;
+      positions[p.id] = { x: cx + radiusX * Math.cos(angle), y: cy + radiusY * Math.sin(angle) };
+    });
+    return positions;
+  })();
   const neighborSet = new Set();
   if (selected) {
     neighborSet.add(selected);
@@ -1714,8 +1764,8 @@ export default function VocabGraph() {
     });
   }
   const learnedCount = learnedSet.size;
-    const totalCount = Object.keys(data.nodes).length;
-    const wordList = Object.values(data.nodes);
+    const totalCount = Object.keys(data.nodes).filter((n) => data.nodes[n]?.kind !== "pattern").length;
+    const wordList = Object.values(data.nodes).filter((n) => n?.kind !== "pattern");
     const cats = [...new Set(wordList.map((w) => w.cat))];
 
     // Gamificación (progression): racha, XP, nivel y progreso de la barra
@@ -1733,8 +1783,10 @@ export default function VocabGraph() {
     // Patterns personalizados (intereses + biblioteca base) y los que están vencidos para review.
     const profilePatterns = patternsForProfile(currentInterests.filter((i) => typeof i === "string"));
         const customPatterns = data.customPatterns || [];
-    // Biblioteca de plantillas Slot-and-Filler: semilla + las que CREÓ el usuario.
-    const allPatternBank = [...SEED_PATTERNS, ...(data.patternBank || [])];
+    // Biblioteca de plantillas Slot-and-Filler: semilla + las que CREÓ el usuario,
+    // FILTRADAS por el CEFR del onboarding (avanzados no ven las elementales).
+    const allPatternBank = [...SEED_PATTERNS, ...(data.patternBank || [])]
+      .filter((t) => templateAllowedForCefr(t, userCefrNow));
         // Biblioteca base + intereses + los que CREÓ el usuario (sin duplicados por texto).
         const allPatterns = [...profilePatterns.filter((p) => !customPatterns.some((c) => c.en === p.en)), ...customPatterns];
         const duePatterns = allPatterns.filter((p) => { const c = data.patternSrs?.[p.id]; return c && c.due <= Date.now(); });
@@ -1789,6 +1841,18 @@ export default function VocabGraph() {
                     <option value="intermediate">Intermediate</option>
                     <option value="advanced">Advanced</option>
                   </select>
+                  {data.level === "advanced" && (
+                    <select
+                      style={styles.levelSelect}
+                      value={data.cefr || "B2"}
+                      onChange={(e) => setData((prev) => ({ ...prev, cefr: e.target.value }))}
+                      title="Sub-nivel CEFR — define qué patrones avanzados se practican"
+                    >
+                      {CEFR_ORDER.filter((c) => cefrIndex(c) >= cefrIndex("B2")).map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </header>
 
@@ -2028,6 +2092,31 @@ export default function VocabGraph() {
           );
         })}
 
+        {/* Pattern↔word: aristas punteadas de cada palabra a sus patterns */}
+        {(data?.edges || []).map((e, i) => {
+          const srcNode = data.nodes[e.source];
+          const dstNode = data.nodes[e.target];
+          if (!srcNode || !dstNode) return null;
+          const srcIsPattern = srcNode.kind === "pattern";
+          const dstIsPattern = dstNode.kind === "pattern";
+          if (!srcIsPattern && !dstIsPattern) return null; // ya dibujada arriba
+          const word = srcIsPattern ? dstNode : srcNode;
+          const pat = srcIsPattern ? srcNode : dstNode;
+          if (!visiblePatternIds.has(pat.id)) return null; // pattern fuera del techo del nivel
+          const pos = patternNodePositions[pat.id];
+          if (!pos || !word.x) return null;
+          return (
+            <line
+              key={`pat-${i}`}
+              x1={word.x} y1={word.y} x2={pos.x} y2={pos.y}
+              stroke={learnedSet.has(word.id) ? "#8CC9D9" : "#3d504f"}
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              strokeOpacity={selected ? (word.id === selected ? 0.9 : 0.06) : learnedSet.has(word.id) ? 0.6 : 0.3}
+            />
+          );
+        })}
+
         {nodeData.map((n) => {
           const st = status(n.id);
           const categoryColor = catColor(n.cat, nodeData.indexOf(n));
@@ -2056,6 +2145,47 @@ export default function VocabGraph() {
                   {n.en}
                 </text>
               )}
+            </g>
+          );
+        })}
+
+        {/* Pattern Nodes — anillo exterior fijo (no entran en la simulación):
+            romboidales, con etiqueta CEFR, clicables como cualquier nodo */}
+        {Object.values(data.nodes).filter((n) => n?.kind === "pattern" && visiblePatternIds.has(n.id)).map((p) => {
+          const pos = patternNodePositions[p.id];
+          if (!pos) return null;
+          const isSel = selected === p.id;
+          const srsInfo = data.patternSrs?.[p.id];
+          const dimmed = selected && !neighborSet.has(p.id) ? 0.3 : 1;
+          return (
+            <g
+              key={p.id}
+              data-node-id={p.id}
+              transform={`translate(${pos.x},${pos.y})`}
+              style={{ cursor: "pointer" }}
+              opacity={dimmed}
+            >
+              <circle data-node-id={p.id} r={24} fill="transparent" />
+              <rect
+                x={-15} y={-11} width={30} height={22} rx={4}
+                transform={`rotate(45)`}
+                fill={isSel ? "#2a4a52" : "#172429"}
+                fillOpacity={isSel ? 0.95 : 0.85}
+                stroke={isSel ? "#8CC9D9" : "#3a5a6a"}
+                strokeWidth={isSel ? 1.8 : 1.2}
+              />
+              <text
+                y={4} textAnchor="middle"
+                style={{ fontSize: 9, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fill: "#8CC9D9", fontWeight: 700, pointerEvents: "none" }}
+              >
+                {p.cefr}
+              </text>
+              <text
+                y={-18} textAnchor="middle"
+                style={{ fontSize: 9.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fill: srsInfo ? "#8CC9D9" : "#6b7d84", pointerEvents: "none" }}
+              >
+                {p.def.length > 26 ? p.def.slice(0, 26) + "…" : p.def}
+              </text>
             </g>
           );
         })}
@@ -2334,13 +2464,20 @@ export default function VocabGraph() {
                       {(() => {
                         const bank = allPatternBank;
                         const showEs = data.level !== "advanced";
-                        // desbloqueo: mismo criterio que Practice — 2 patterns completados del nivel anterior
+                        // desbloqueo: 2 patterns del nivel anterior (1 si el CEFR es B1+),
+                        // y el nivel inicial adapta al CEFR del onboarding
                         const patternSrs = data.patternSrs || {};
                         const countDone = (lvl) => Object.values(patternSrs).filter((s) => s.level === lvl && s.reps > 0).length;
-                        const unlockedLvls = [1];
-                        if (countDone(1) >= 2) unlockedLvls.push(2);
-                        if (countDone(2) >= 2) unlockedLvls.push(3);
-                        if (countDone(3) >= 2) unlockedLvls.push(4);
+                        const cefrNow = userCefrNow;
+                        const advancedNow = isAdvancedCefr(cefrNow);
+                        const req = cefrIndex(cefrNow) >= cefrIndex("B1") ? 1 : 2;
+                        const startLevel = advancedNow ? Math.min(4, Math.max(1, cefrIndex(cefrNow) - 1)) : 1;
+                        const unlockedLvls = [];
+                        for (let l = 1; l <= 4; l++) {
+                          if (l < startLevel) continue; // niveles elementales por debajo del CEFR: bloqueados
+                          if (l === startLevel) { unlockedLvls.push(l); continue; }
+                          if (countDone(l - 1) >= req) unlockedLvls.push(l);
+                        }
                         const parts = [];
                         for (const lv of PATTERN_LEVELS) {
                           const group = bank.filter((t) => patternAutoLevel(t) === lv.id);
