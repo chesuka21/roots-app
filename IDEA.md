@@ -30,6 +30,9 @@ This application is an AI-powered, graph-based language learning platform starti
 
 - Interactive node network displaying connections between learned and targeted vocabulary.
 - Visual representation of "neural links" between words based on shared categories, roots, synonyms, or contextual usage.
+- **Two node classes:** Vocabulary Nodes (`{ id, en, def, cat, ... }`) and Pattern Nodes (`{ id, kind: "pattern", cefr, frame, ... }`).
+- **Typed pattern↔word edges:** `patternOf` (word → pattern, the word is practiced inside it) and `uses` (pattern → word). Pattern Nodes render as a fixed outer ring (diamond shape, CEFR label) and never enter the d3 physics simulation.
+- **CEFR ceiling visibility:** the map only shows Pattern Nodes whose CEFR is at or below the user's level (max 1 grade below it) — elemental A1/A2 patterns never appear for advanced (B2/C1/C2) users.
 
 ### B. Spaced Repetition System (SRS) & Practice
 <Image src="image_agent_tag_7333160965614312668" alt="Flashcard repetition learning screen" caption="Módulo de Spaced Repetition y Flashcards" />
@@ -48,8 +51,9 @@ This application is an AI-powered, graph-based language learning platform starti
 
 ### D. Linguistic Patterns & Practice by Level
 - Framework dedicated to frequent structural speech patterns (recurrent grammatical and colloquial constructs).
-- Segmented by proficiency levels (A1 to C2).
-- *Pending Architecture Goal:* Unify the general Patterns module directly with the Level-based Practice Patterns module for seamless progress tracking.
+- Segmented by proficiency levels (A1 to C2) via the CEFR pattern bank (`src/data/patterns-cefr.js`).
+- **Implemented:** the general Patterns module and the Level-based Practice Patterns module are unified — both share the same slot-and-filler frame format (`{ k, fixed }`), the same SRS store (`data.patternSrs`), and the same unlock rules, now CEFR-aware: onboarding level sets the starting tier, advanced users (B2/C1/C2) skip elemental tiers and get advanced structures (inversions, mixed conditionals, advanced phrasal verbs, formal connectors, complex collocations).
+- Words added to the map are auto-linked to relevant patterns for their onboarding level and get reviewed inside those structures through Spaced Repetition.
 
 ### E. Smart Lookup & Idiomatic Expressions
 - **Descriptive Search:** Search for words by describing their concept or context when exact spelling is forgotten.
