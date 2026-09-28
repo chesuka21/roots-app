@@ -218,19 +218,23 @@ export default async function handler(req, res) {
   }
 
   // 1) Groq primero (rápido) → 2) OpenRouter (fallback, gratis) → 3) Gemini (desempate)
-  // Secuencial — no race con stagger, el race duplicaba consumo de tokens.
+  // Si uno falla, sigue al siguiente. Solo devuelve 502 si TODOS fallan.
+  let lastError = null;
+
   if (process.env.GROQ_API_KEY) {
     try {
       return await tryGroq();
     } catch (e) {
-      console.error("Groq failed, trying OpenRouter:", e.message);
+      console.error("Groq failed:", e.message);
+      lastError = e;
     }
   }
   if (process.env.OPENROUTER_API_KEY) {
     try {
       return await tryOpenRouter();
     } catch (e) {
-      console.error("OpenRouter failed, trying Gemini:", e.message);
+      console.error("OpenRouter failed:", e.message);
+      lastError = e;
     }
   }
   if (process.env.GEMINI_API_KEY) {
@@ -238,8 +242,14 @@ export default async function handler(req, res) {
       return await tryGemini();
     } catch (e) {
       console.error("Gemini failed:", e.message);
-      return res.status(502).json({ error: { message: e.message } });
+      lastError = e;
     }
   }
-  return res.status(500).json({ error: { message: "No AI provider configured (GROQ/OPENROUTER/GEMINI)" } });
+
+  // Todos fallaron — mensaje útil
+  return res.status(502).json({
+    error: {
+      message: `Todos los proveedores fallaron. Último error: ${lastError?.message || "desconocido"}`
+    }
+  });
 }
