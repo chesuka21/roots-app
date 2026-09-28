@@ -8,6 +8,7 @@ import { PATTERN_LEVELS } from "../data/patterns.js";
 import { buildSeedGraph, indexGraph } from "../lib/graph.js";
 import { fillPattern } from "../lib/generator.js";
 import { conjugateVerb } from "../data/patterns.js";
+import { TIER_TO_CEFR, cefrIndex, isAdvancedCefr, templateAllowedForCefr } from "../data/patterns-cefr.js";
 
 const USER_GRAPH_KEY = "roots-graph-v1";
 
@@ -75,6 +76,13 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     return indexGraph(g);
   }, [wordbank]);
 
+  // ── Unificación Patterns ↔ Practice Patterns ──
+  // CEFR del usuario (del onboarding): filtra qué plantillas se ofrecen y
+  // evita patrones elementales en niveles avanzados (B2/C1/C2).
+  const userCefr = data?.cefr || TIER_TO_CEFR[data?.level] || "A2";
+  const userCefrIdx = cefrIndex(userCefr);
+  const advanced = isAdvancedCefr(userCefr);
+
   // patterns completados hoy, para el desbloqueo
   const patternProgress = useMemo(() => {
     const srs = data.patternSrs || {};
@@ -87,12 +95,22 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
 
   const unlockedLevels = useMemo(() => {
     const done = patternProgress[1] || 0;
+    // ── Adaptación por nivel de onboarding ──
+    // Nivel avanzado (B2/C1/C2): empieza DIRECTO en su nivel (sin recorrer los
+    // elementales); intermedio puede desbloquear con menos repeticiones.
+    if (advanced) {
+      const startIdx = Math.min(3, Math.max(0, userCefrIdx - 1)); // B2→lv2, C1/C2→lv3
+      const lvls = [];
+      for (let l = 1; l <= 4; l++) if (l >= startIdx) lvls.push(l);
+      return lvls;
+    }
+    const req = userCefrIdx >= cefrIndex("B1") ? 1 : 2; // intermedio desbloquea con 1, básico con 2
     const lvls = [1];
-    if (done >= 2) lvls.push(2);
-    if ((patternProgress[2] || 0) >= 2) lvls.push(3);
-    if ((patternProgress[3] || 0) >= 2) lvls.push(4);
+    if (done >= req) lvls.push(2);
+    if ((patternProgress[2] || 0) >= req) lvls.push(3);
+    if ((patternProgress[3] || 0) >= req) lvls.push(4);
     return lvls;
-  }, [patternProgress]);
+  }, [patternProgress, advanced, userCefrIdx]);
 
   const startExercise = (levelId) => {
     setActiveLevel(levelId);
@@ -222,6 +240,14 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
           ...(prev.patternSrs || {}),
           [`lvl${lvlDone}-${agent}-${verb}-${object || "x"}`]: { level: lvlDone, reps: 1, due: Date.now() + 86400000 },
         },
+        // Unificación: el pattern practicado queda vinculado a las palabras usadas
+        // en el mapa (arista pattern↔word) para que el repaso cruce ambos módulos.
+        edges: [
+          ...(prev.edges || []),
+          ...[verb, object].filter(Boolean)
+            .map((w) => ({ source: `pat-svo`, target: w, rel: "patternOf", kind: "pattern-link" }))
+            .filter((e) => prev.nodes?.[e.target]),
+        ],
       }));
       grantXp(20);
       setChecking(false);
