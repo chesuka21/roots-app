@@ -404,7 +404,20 @@ Return ONLY valid JSON, no markdown:
 Rules:
 - "word": lowercase, single common English word.
 - "why": under 10 words, why for them or why it's generally useful.`;
-  return callClaudeJson(prompt, 500);
+  // fallback local si la IA falla — siempre hay sugerencias
+  try {
+    return await callClaudeJson(prompt, 500);
+  } catch (e) {
+    console.error("[suggest] usando fallback local:", e.message);
+    const filtered = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
+    if (filtered.length < 5) {
+      // pool agotado: fallback libre (clase 'filtered' vacío)
+      return callClaudeJson(`An English learner needs 5 new words not in: ${[...seen].join(", ")}. JSON: {"suggestions":[{"word":"...","why":"..."}]} Rules: lowercase words, "why" under 10 words.`, 500);
+    }
+    const shuffled = [...filtered];
+    for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]; }
+    return { suggestions: shuffled.slice(0, 5).map((w) => ({ word: w, why: "Common useful word" })) };
+  }
 }
 
 async function generateWordDetails(word, existingWords) {
@@ -435,6 +448,7 @@ Rules:
     const prompt = `For the word "${correctedWord}", 2 to 5 words FROM THIS EXISTING LIST relate naturally in meaning or everyday use: ${wordList || "(none yet)"}\n\nReturn ONLY valid JSON: {"connections":[{"word":"<one existing word from the list>","sentence":"<a short natural English sentence using both ${correctedWord} and that word>"}]}\nRules: pick the most genuinely connected words, spell them exactly as in the list, keep sentences short and simple. Never use double quotes inside a value — use single quotes.`;
     return callClaudeJson(prompt, 350);
   }
+
   // Devuelve { details, fromLocal } donde details tiene la forma esperada por runGenerate.
   async function generateWordDetailsSmart(word, existingWords) {
     const local = lookupLocalWord(word);
@@ -464,8 +478,8 @@ Rules:
     }
     // No está en el banco (palabra poco común / técnica) → flujo IA completo.
     const full = await generateWordDetails(word, existingWords);
-        return { fromLocal: false, details: full };
-      }
+    return { fromLocal: false, details: full };
+  }
 
     // Umbral de repasos para "merecer" sinónimos/antónimos (evita llamadas IA prematuras).
     const SYNONYM_REVIEW_THRESHOLD = 3;
@@ -517,7 +531,43 @@ Rules:
 
 
 /* ---------- Starter word graph (English only, simple definitions) ---------- */
+// Mapeo de categorías a colores — mejora la navegación visual del grafo.
+// Agrupa concepts semanticamente: verde=naturaleza, rojo=emociones, azul=tech/trabajo...
+const CATEGORY_COLORS = {
+  food: "#D98C5F",
+  feelings: "#E8A87C",
+  opinions: "#C98CC9",
+  people: "#8CA9C9",
+  tech: "#7BA9A0",
+  tech_tools: "#7BA9A0",
+  work: "#4FAE82",
+  school: "#C9A15A",
+  nature: "#A9B16B",
+  health: "#D98C8C",
+  exercise: "#D98C8C",
+  music: "#C98CC9",
+  games: "#D98C5F",
+  soccer: "#A9B16B",
+  fitness: "#D98C8C",
+  travel: "#6BB0A9",
+  time: "#9E9E9E",
+  space: "#4A90D9",
+  art: "#D98C5F",
+  money: "#C9A15A",
+  clothing: "#C98CC9",
+  transport: "#9E9E9E",
+  actions: "#D98C8C",
+  daily: "#C9A15A",
+  home: "#A9B16B",
+  relationships: "#E8A87C",
+};
+// fallback para categorías desconocidas
 const PALETTE = ["#8CA9C9", "#D98C5F", "#C98CC9", "#A9B16B", "#4FAE82", "#C9A15A", "#7BA9A0"];
+function catColor(cat, fallbackIndex = 0) {
+  const k = String(cat || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (CATEGORY_COLORS[k]) return CATEGORY_COLORS[k];
+  return PALETTE[fallbackIndex % PALETTE.length];
+}
 
 const SEED_NODES = {
   study:    { def: "to spend time learning about something", defEs: "pasar tiempo aprendiendo algo", cat: "school" },
@@ -817,7 +867,25 @@ Rules:
 - "corrected": the most natural correct version of the sentence (if it was already correct, repeat it unchanged).
 - "note": one short, encouraging sentence in simple English explaining what changed and why (or confirming it was correct). Under 20 words.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
-  return callClaudeJson(prompt, 500);
+  // 3) Llamamos a la IA con fallback local: si todos los proveedores fallan,
+  // igual devolvemos sugerencias (sin "why" personalizado, pero NO vacío).
+  try {
+    return await callClaudeJson(prompt, 500);
+  } catch (e) {
+    console.error("[suggest] IA falló, usando fallback local:", e.message);
+    // fallback: devolver 5 palabras aleatorias del pool sin personalización
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return {
+      suggestions: shuffled.slice(0, 5).map((w) => ({
+        word: w,
+        why: "Common useful word — works in many contexts."
+      }))
+    };
+  }
 }
 
 async function checkConnectionSentence(word, connectedWord, sentence) {
@@ -1028,6 +1096,8 @@ export default function VocabGraph() {
   const [suggestResults, setSuggestResults] = useState(null);
   const [suggestChecked, setSuggestChecked] = useState(new Set());
   const [suggestBatch, setSuggestBatch] = useState([]);
+  const [editingConnections, setEditingConnections] = useState(false);
+  const [editConnList, setEditConnList] = useState([]);
   const [idiomText, setIdiomText] = useState("");
   const [idiomBusy, setIdiomBusy] = useState(false);
   const [idiomResult, setIdiomResult] = useState(null);
@@ -1960,10 +2030,12 @@ export default function VocabGraph() {
 
         {nodeData.map((n) => {
           const st = status(n.id);
-          const catColor = colorFor(n.cat);
+          const categoryColor = catColor(n.cat, nodeData.indexOf(n));
           const deg = degreeMap[n.id] || 0;
           const r = (st === "learned" ? 15 : st === "suggested" ? 12 : 8) + Math.min(deg, 8);
-          const fill = st === "learned" ? "#6FBF8B" : st === "suggested" ? "#D9A441" : "#2a343c";
+          // nodo fill: categoría (si existe) + estado (learned=suave, suggested=amarillo, new=gris)
+          const fill = st === "learned" ? categoryColor : st === "suggested" ? "#D9A441" : "#2a343c";
+          const fillOpacity = st === "learned" ? 0.9 : st === "suggested" ? 0.9 : 0.7;
           return (
             <g
               key={n.id}
@@ -1973,8 +2045,8 @@ export default function VocabGraph() {
               opacity={selected && !neighborSet.has(n.id) ? 0.25 : 1}
             >
               <circle data-node-id={n.id} r={Math.max(r + 10, 22)} fill="transparent" />
-              <circle r={r + 4} fill="none" stroke={catColor} strokeWidth={1.2} opacity={0.55} />
-              <circle r={r} fill={fill} stroke={st === "new" ? "#4a5763" : "none"} strokeWidth={1} />
+              <circle r={r + 4} fill="none" stroke={categoryColor} strokeWidth={1.2} opacity={0.55} />
+              <circle r={r} fill={fill} fillOpacity={fillOpacity} stroke={st === "new" ? "#4a5763" : "none"} strokeWidth={1} />
               {st !== "new" && (
                 <text
                   y={-r - 8}
@@ -2733,6 +2805,9 @@ export default function VocabGraph() {
                       <button style={styles.iconBtn} onClick={() => { setEditForm({ en: w.en, def: w.def, defEs: w.defEs || "", cat: w.cat }); setEditingWord(true); }}>
                         <Pencil size={14} />
                       </button>
+                      <button style={{ ...styles.iconBtn, borderLeft: "1px solid #2d3d33", paddingLeft: 10 }} onClick={() => { setEditingConnections(!editingConnections); if (!editingConnections) setEditConnList(data.nodes[w.id] ? Object.values(data.nodes).filter((n) => data.edges.some((e) => e.source === w.id && e.target === n.id || e.source === n.id && e.target === w.id)).map((n) => ({ id: n.id, en: n.en })) : []); }}>
+                        <Waves size={14} />
+                      </button>
                       <button style={deleteConfirm ? styles.iconBtnDanger : styles.iconBtn} onClick={() => (deleteConfirm ? deleteWord(w.id) : setDeleteConfirm(true))}>
                         <Trash2 size={14} />
                       </button>
@@ -2768,6 +2843,58 @@ export default function VocabGraph() {
                     )
                   )}
                 </>
+              )}
+              {/* Modal editar conexiones — checkboxes para agregar/quitar enlaces */}
+              {editingConnections && (
+                <div style={styles.modalOverlay}>
+                  <div style={styles.modalCard}>
+                    <h3 style={{ marginTop: 0 }}>Connections for "{w.en}"</h3>
+                    <p style={styles.formHint}>Select which words to link. Unchecked = remove connection.</p>
+                    <div style={{ maxHeight: 300, overflowY: "auto", margin: "12px 0" }}>
+                      {Object.values(data.nodes)
+                        .filter((n) => n.id !== w.id)
+                        .map((n) => {
+                          const connected = editConnList.some((c) => c.id === n.id);
+                          return (
+                            <label key={n.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", cursor: "pointer", borderBottom: "1px solid #1e2a27" }}>
+                              <input
+                                type="checkbox"
+                                checked={connected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setEditConnList([...editConnList, { id: n.id, en: n.en }]);
+                                  } else {
+                                    setEditConnList(editConnList.filter((c) => c.id !== n.id));
+                                  }
+                                }}
+                              />
+                              <span style={{ color: "#cfe3d8" }}>{n.en}</span>
+                              <span style={{ color: "#71807d", fontSize: 12 }}>({n.cat})</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                      <button style={styles.tab} onClick={() => setEditingConnections(false)}>Cancel</button>
+                      <button
+                        style={styles.learnBtn}
+                        onClick={() => {
+                          // Aplicar: borrar todas las conexiones del nodo, luego crear las seleccionadas
+                          const newEdges = data.edges.filter((e) => e.source !== w.id && e.target !== w.id);
+                          const newNodeEdges = editConnList.map((c) => ({ source: w.id, target: c.id }));
+                          const newNodes = { ...data.nodes };
+                          // Actualizar el timestamp de la palabra
+                          newNodes[w.id] = { ...newNodes[w.id], updatedAt: Date.now() };
+                          setData({ ...data, edges: [...newEdges, ...newNodeEdges], nodes: newNodes });
+                          setEditingConnections(false);
+                          setEditConnList([]);
+                        }}
+                      >
+                        <Check size={14} /> Save connections
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
               {!editingWord && (() => {
                 const ex = examples[Math.min(exampleIdx, examples.length - 1)];
