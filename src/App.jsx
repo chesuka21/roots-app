@@ -2370,7 +2370,7 @@ export default function VocabGraph() {
                       setReviewActive(true);
                     }}
                   >
-                    Practice anyway ({learnedCount} word{learnedCount === 1 ? "" : "s"})
+                    Practice anyway <Play size={15} style={{ marginLeft: 6 }} /> ({learnedCount} word{learnedCount === 1 ? "" : "s"})
                   </button>
                 </>
               ) : (
