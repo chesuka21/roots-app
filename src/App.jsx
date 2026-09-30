@@ -934,10 +934,39 @@ function buildGraphData() {
     return { nodes: ensurePatternNodes(nodes), edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, cefr: null, progression: initProgression() };
 }
 
-/* ---------- Placement quiz (fixed questions — no AI calls needed) ---------- */
-/* Each tier has 3 questions matched to that tier's difficulty. The tier shown
-   is picked from the self-report; the score within it can then nudge the
-   final level up or down by one step. */
+/* ---------- Placement quiz adaptativo (escala CEFR A1–C2, sin IA) ---------- */
+/* Banco por rung CEFR: 2 preguntas por nivel. El quiz es una ESCALERA: empieza
+   en el rung del self-report y cada respuesta mueve el rung (correcto → sube,
+   error → baja). 5 preguntas después, el rung final se convierte a CEFR real.
+   Escalable: añadir un rung = añadir 2 entradas aquí, sin tocar la lógica. */
+const QUIZ_BANK = {
+  A1: [
+    { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
+    { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
+  ],
+  A2: [
+    { q: "Choose the correct sentence.", options: ["She don't like coffee.", "She doesn't like coffee.", "She not like coffee.", "She isn't like coffee."], correct: 1 },
+    { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
+  ],
+  B1: [
+    { q: "I have been living here ___ 3 years.", options: ["since", "for", "from", "during"], correct: 1 },
+    { q: "By the time we arrived, the movie ___.", options: ["already started", "has already started", "had already started", "was already starting"], correct: 2 },
+  ],
+  B2: [
+    { q: "Choose the correct sentence.", options: ["If I would have known, I would have called.", "If I had known, I would have called.", "If I knew, I would have called.", "If I have known, I would call."], correct: 1 },
+    { q: "The company's profits have ___ significantly this year.", options: ["rose", "raised", "risen", "rising"], correct: 2 },
+  ],
+  C1: [
+    { q: "Choose the sentence with correct usage.", options: ["I wish I would have more time.", "I wish I had more time.", "I wish I have more time.", "I wish I would had more time."], correct: 1 },
+    { q: "___ had he arrived than the phone rang.", options: ["Rarely", "No sooner", "Hardly ever", "Scarcely"], correct: 1 },
+  ],
+  C2: [
+    { q: "Choose the formal equivalent of \"But it was expensive.\"", options: ["However, it was expensive.", "And it was expensive.", "So it was expensive.", "Because it was expensive."], correct: 0 },
+    { q: "Choose the correct cleft sentence.", options: ["What I need is a break.", "What I need it is a break.", "That I need is a break.", "What I need a break is."], correct: 0 },
+  ],
+};
+// Legacy: tiers de 3 preguntas del onboarding original (siguen disponibles si
+// se quiere el formato fijo; el flujo nuevo usa QUIZ_BANK con escalera).
 const QUIZ_TIERS = {
   beginner: [
     { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
@@ -946,7 +975,7 @@ const QUIZ_TIERS = {
   ],
   intermediate: [
     { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
-    { q: "Choose the correct sentence.", options: ["I have been living here since 3 years.", "I have been living here for 3 years.", "I am living here since 3 years.", "I live here since 3 years."], correct: 1 },
+    { q: "I have been living here since 3 years.", options: ["I have been living here since 3 years.", "I have been living here for 3 years.", "I am living here since 3 years.", "I live here since 3 years."], correct: 1 },
     { q: "By the time we arrived, the movie ___.", options: ["already started", "has already started", "had already started", "was already starting"], correct: 2 },
   ],
   advanced: [
@@ -964,30 +993,69 @@ function adjustedLevel(startLevel, score) {
   return startLevel; // 2/3 — about right
 }
 
+/* ── Quiz adaptativo: escalera CEFR (estructura preparada para producción) ──
+   - startRung: rung inicial según el self-report (beginner→A1, intermediate→B1, advanced→B2).
+   - Cada respuesta mueve el rung: correcto → +1, error → −1 (nunca fuera de A1..C2).
+   - QUIZ_LENGTH preguntas después, el rung final ES el CEFR del usuario.
+   - Escalable/adaptativo: dificultad creciente automática al subir de rung. */
+const QUIZ_LENGTH = 5;
+const SELF_TO_RUNG = { beginner: "A1", intermediate: "B1", advanced: "B2" };
+function nextRung(rung, correct) {
+  const i = CEFR_ORDER.indexOf(rung);
+  return CEFR_ORDER[Math.min(CEFR_ORDER.length - 1, Math.max(0, i + (correct ? 1 : -1)))];
+}
+function pickQuizQuestion(rung, asked) {
+  // pregunta no repetida del rung; si el rung se agota, la más reciente
+  const pool = (QUIZ_BANK[rung] || []).filter((q) => !asked.includes(q.q));
+  return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
+}
+
 function Onboarding({ onFinish }) {
   const [step, setStep] = useState("self"); // "self" | "quiz" | "result" | "profile"
   const [selfReport, setSelfReport] = useState(null);
   const [quizIdx, setQuizIdx] = useState(0);
-  const [score, setScore] = useState(0);
+  const [rung, setRung] = useState(null); // rung CEFR actual de la escalera adaptativa
+  const [asked, setAsked] = useState([]); // preguntas ya mostradas (no repetir)
+  const [currentQ, setCurrentQ] = useState(null);
   const [picked, setPicked] = useState(null);
   const [finalLevel, setFinalLevel] = useState(null);
+  const [finalCefr, setFinalCefr] = useState(null);
   const [job, setJob] = useState("");
   const [interests, setInterests] = useState("");
-  const quizSet = selfReport ? QUIZ_TIERS[selfReport] : [];
+
+  const startQuiz = (lvl) => {
+    const startRung = SELF_TO_RUNG[lvl] || "A1";
+    const q = pickQuizQuestion(startRung, []);
+    setSelfReport(lvl);
+    setRung(startRung);
+    setAsked(q ? [q.q] : []);
+    setCurrentQ(q);
+    setQuizIdx(0);
+    setStep("quiz");
+  };
 
   const answer = (i) => {
+    if (!currentQ) return;
     setPicked(i);
     setTimeout(() => {
-      const correct = i === quizSet[quizIdx].correct;
-      const newScore = score + (correct ? 1 : 0);
-      setScore(newScore);
-      setPicked(null);
-      if (quizIdx + 1 >= quizSet.length) {
-        setFinalLevel(adjustedLevel(selfReport, newScore));
+      const correct = i === currentQ.correct;
+      const nextIdx = quizIdx + 1;
+      if (nextIdx >= QUIZ_LENGTH) {
+        // Fin de la escalera: el rung final ES el CEFR real del usuario.
+        setFinalCefr(rung);
+        setFinalLevel(rung); // retro-compat: el bloque del header usa rungs CEFR
         setStep("result");
-      } else {
-        setQuizIdx(quizIdx + 1);
+        setPicked(null);
+        return;
       }
+      // Adaptativo: correcto → sube de rung, error → baja.
+      const nextR = nextRung(rung, correct);
+      const q = pickQuizQuestion(nextR, asked);
+      setRung(nextR);
+      setAsked((a) => (q ? [...a, q.q] : a));
+      setCurrentQ(q);
+      setQuizIdx(nextIdx);
+      setPicked(null);
     }, 350);
   };
 
@@ -1001,8 +1069,11 @@ function Onboarding({ onFinish }) {
           <>
             <p style={styles.sectionBody}>How would you describe your English level right now?</p>
             {["beginner", "intermediate", "advanced"].map((lvl) => (
-              <button key={lvl} style={styles.onboardOption} onClick={() => { setSelfReport(lvl); setStep("quiz"); }}>
-                {lvl === "beginner" ? "Beginner — just starting out" : lvl === "intermediate" ? "Intermediate — I get by" : "Advanced — pretty comfortable"}
+              <button key={lvl} style={styles.onboardOption} onClick={() => startQuiz(lvl)}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  {lvl === "beginner" ? <Sprout size={15} color="#6FBF8B" /> : lvl === "intermediate" ? <Waves size={15} color="#D9A441" /> : <Layers size={15} color="#8CC9D9" />}
+                  {lvl === "beginner" ? "Beginner — just starting out" : lvl === "intermediate" ? "Intermediate — I get by" : "Advanced — pretty comfortable"}
+                </span>
               </button>
             ))}
           </>
@@ -1010,9 +1081,9 @@ function Onboarding({ onFinish }) {
 
         {step === "quiz" && (
           <>
-            <p style={styles.formHint}>Quick check ({selfReport} level) — question {quizIdx + 1} of {quizSet.length}</p>
-            <p style={styles.sectionBody}>{quizSet[quizIdx].q}</p>
-            {quizSet[quizIdx].options.map((opt, i) => (
+            <p style={styles.formHint}>Nivelación adaptativa — pregunta {quizIdx + 1} de {QUIZ_LENGTH} · nivel {rung}</p>
+            <p style={styles.sectionBody}>{currentQ?.q}</p>
+            {(currentQ?.options || []).map((opt, i) => (
               <button
                 key={i}
                 style={picked === i ? styles.onboardOptionPicked : styles.onboardOption}
@@ -1027,24 +1098,24 @@ function Onboarding({ onFinish }) {
         {step === "result" && (
           <>
             <p style={styles.sectionBody}>
-              Based on the quiz, you're at <b>{finalLevel}</b>
-              {selfReport && selfReport !== finalLevel ? ` (adjusted from your guess of ${selfReport}).` : "."}
+              Based on the quiz, you're at <b>{finalCefr || finalLevel}</b>
+              {selfReport ? ` (started from your guess of ${selfReport}).` : "."}
             </p>
             <p style={styles.formHint}>
-              {finalLevel === "beginner"
+              {["A1", "A2"].includes(finalCefr)
                 ? "Spanish translations will show by default — you can turn them off anytime."
-                : finalLevel === "intermediate"
+                : ["B1", "B2"].includes(finalCefr)
                 ? "Translations will be hidden but one tap away when you need them."
                 : "The app will stay 100% English — no translations shown."}
             </p>
-            <label style={styles.label}>Not right? Pick your level manually:</label>
-            {["beginner", "intermediate", "advanced"].map((lvl) => (
+            <label style={styles.label}>Not right? Pick your sub-level manually:</label>
+            {CEFR_ORDER.map((c) => (
               <button
-                key={lvl}
-                style={finalLevel === lvl ? styles.onboardOptionPicked : styles.onboardOption}
-                onClick={() => setFinalLevel(lvl)}
+                key={c}
+                style={(finalCefr || finalLevel) === c ? styles.onboardOptionPicked : styles.onboardOption}
+                onClick={() => { setFinalCefr(c); setFinalLevel(c); }}
               >
-                {lvl}
+                {c}
               </button>
             ))}
             <button style={styles.learnBtn} onClick={() => setStep("profile")}>
@@ -1062,7 +1133,7 @@ function Onboarding({ onFinish }) {
             <input style={styles.input} value={job} onChange={(e) => setJob(e.target.value)} placeholder="e.g. chef, law student, nurse" />
             <label style={styles.label}>Interests or hobbies</label>
             <input style={styles.input} value={interests} onChange={(e) => setInterests(e.target.value)} placeholder="e.g. cooking, soccer, video games" />
-            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel, { job: job.trim(), interests: interests.trim() })}>
+            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel, finalCefr, { job: job.trim(), interests: interests.trim() })}>
               Start learning <ChevronRight size={16} />
             </button>
           </>
@@ -1712,20 +1783,19 @@ export default function VocabGraph() {
   if (!data.onboarded) {
     return (
       <Onboarding
-        onFinish={(level, profile) => setData((prev) => {
-          // CEFR real derivado del onboarding: nivel self-report + ajuste del quiz.
-          // Avanzados pueden afinar su sub-nivel (B2/C1/C2) en Ajustes después.
-          const cefr = TIER_TO_CEFR[level] || "A2";
+        onFinish={(level, cefr, profile) => setData((prev) => {
+          // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
+          const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
           const nodes = ensurePatternNodes(prev.nodes);
           // Vincular cada palabra ya en el mapa a sus patterns según el nivel detectado.
           const newEdges = [...prev.edges];
           for (const w of Object.values(nodes)) {
             if (w.kind === "pattern") continue;
-            for (const e of linkWordToPatterns(w, cefr)) {
+            for (const e of linkWordToPatterns(w, cefrFinal)) {
               if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
             }
           }
-          return { ...prev, level, profile, onboarded: true, cefr, nodes, edges: newEdges };
+          return { ...prev, level, profile, onboarded: true, cefr: cefrFinal, nodes, edges: newEdges };
         })}
       />
     );
@@ -1850,18 +1920,44 @@ export default function VocabGraph() {
                     <option value="intermediate">Intermediate</option>
                     <option value="advanced">Advanced</option>
                   </select>
-                  {data.level === "advanced" && (
-                    <select
-                      style={styles.levelSelect}
-                      value={data.cefr || "B2"}
-                      onChange={(e) => setData((prev) => ({ ...prev, cefr: e.target.value }))}
-                      title="Sub-nivel CEFR — define qué patrones avanzados se practican"
-                    >
-                      {CEFR_ORDER.filter((c) => cefrIndex(c) >= cefrIndex("B2")).map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  )}
+                  {(() => {
+                    // Subniveles CEFR por bloque (igual que Advanced):
+                    // Beginner → A1/A2 · Intermediate → A1/A2/B1 · Advanced → B2/C1/C2.
+                    const BLOCK_CEFRS = {
+                      beginner: CEFR_ORDER.filter((c) => cefrIndex(c) <= cefrIndex("A2")),
+                      intermediate: CEFR_ORDER.filter((c) => cefrIndex(c) <= cefrIndex("B1")),
+                      advanced: CEFR_ORDER.filter((c) => cefrIndex(c) >= cefrIndex("B2")),
+                    };
+                    const options = BLOCK_CEFRS[data.level] || BLOCK_CEFRS.beginner;
+                    if (options.length <= 1) return null;
+                    return (
+                      <select
+                        style={styles.levelSelect}
+                        value={options.includes(data.cefr) ? data.cefr : options[options.length - 1]}
+                        onChange={(e) => {
+                          const cefr = e.target.value;
+                          setData((prev) => {
+                            // Re-vincular cada palabra a sus patterns con el nuevo CEFR
+                            // (el techo de visibilidad cambia con el sub-nivel).
+                            const nodes = ensurePatternNodes(prev.nodes);
+                            const newEdges = prev.edges.filter((x) => x.rel !== "patternOf");
+                            for (const w of Object.values(nodes)) {
+                              if (w.kind === "pattern") continue;
+                              for (const e2 of linkWordToPatterns(w, cefr)) {
+                                if (!newEdges.some((x) => x.source === e2.source && x.target === e2.target)) newEdges.push(e2);
+                              }
+                            }
+                            return { ...prev, cefr, nodes, edges: newEdges };
+                          });
+                        }}
+                        title="Sub-nivel CEFR — define qué patrones se practican"
+                      >
+                        {options.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    );
+                  })()}
                 </div>
               </header>
 
