@@ -77,11 +77,20 @@ export function generateDrills(frame, picks, count = 6) {
 }
 
 // Regenera N drills variando cada slot con opciones de las pools de la plantilla.
-export function buildDrills(tpl, count = 6) {
+// Slot & Filler dinámico: `mapWords` son las palabras registradas en el mapa
+// mental del usuario — se usan como fillers del hueco (merged con la pool de
+// la plantilla, capped para no explotar el render). Así el drill practica
+// vocabulario REAL, no listas genéricas.
+export function buildDrills(tpl, count = 6, mapWords = []) {
   const out = [];
+  const tplObjectPool = tpl.objectPool || SLOT_POOLS.object;
+  // palabras del mapa primero (vocabulario propio), luego la pool de la plantilla
+  const mergedObjectPool = mapWords.length
+    ? [...mapWords.slice(0, 20), ...tplObjectPool].filter((w, i, a) => a.indexOf(w) === i)
+    : tplObjectPool;
   const pools = {
     subject: tpl.subjectPool || SLOT_POOLS.subject,
-    object: tpl.objectPool || SLOT_POOLS.object,
+    object: mergedObjectPool,
     time: tpl.timePool || [],
     place: tpl.placePool || [],
   };

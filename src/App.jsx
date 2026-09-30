@@ -1120,6 +1120,10 @@ export default function VocabGraph() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settings, setSettings] = useState(loadVoiceSettings);
     const [showSettings, setShowSettings] = useState(false);
+  // Slider de densidad del grafo (0..1): controla cuántas líneas se ven y el
+  // grosor del enlace según frecuencia de repaso. Persistido en el mismo
+  // objeto `data` (viaja con el mapa, como el resto del estado del Graph View).
+  const [edgeDensity, setEdgeDensity] = useState(0.35);
     const [interestInput, setInterestInput] = useState("");
   const [synBusy, setSynBusy] = useState(false);
     const [synError, setSynError] = useState("");
@@ -1202,6 +1206,9 @@ export default function VocabGraph() {
                   // clave `cefr` en datos viejos sin romper lo ya guardado.
                   initial.nodes = ensurePatternNodes(initial.nodes);
                   if (!initial.cefr) initial.cefr = initial.level ? TIER_TO_CEFR[initial.level] || "A2" : null;
+                  // Migración del slider de densidad del grafo.
+                  if (typeof initial.edgeDensity !== "number") initial.edgeDensity = 0.35;
+                  setEdgeDensity(initial.edgeDensity);
                 }
       }
     } catch (e) {
@@ -1783,6 +1790,8 @@ export default function VocabGraph() {
     // Patterns personalizados (intereses + biblioteca base) y los que están vencidos para review.
     const profilePatterns = patternsForProfile(currentInterests.filter((i) => typeof i === "string"));
         const customPatterns = data.customPatterns || [];
+    // Palabras del mapa para los drills de Slot & Filler (learned primero, dedupe).
+    const learnedArray = [...learnedSet].filter((id) => data.nodes?.[id]?.en).map((id) => id.toLowerCase());
     // Biblioteca de plantillas Slot-and-Filler: semilla + las que CREÓ el usuario,
     // FILTRADAS por el CEFR del onboarding (avanzados no ven las elementales).
     const allPatternBank = [...SEED_PATTERNS, ...(data.patternBank || [])]
@@ -2050,6 +2059,24 @@ export default function VocabGraph() {
             </div>
           ))}
         </div>
+        {/* Slider de densidad: nº de líneas visibles + grosor por frecuencia de repaso */}
+        <div style={styles.densityBox} title="Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo">
+          <span style={styles.densityLabel}>Densidad</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={edgeDensity}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setEdgeDensity(v);
+              setData((prev) => ({ ...prev, edgeDensity: v }));
+            }}
+            style={styles.densitySlider}
+          />
+          <span style={styles.densityValue}>{Math.round(edgeDensity * 100)}%</span>
+        </div>
       </div>
 
       <div style={styles.canvasWrap}>
@@ -2077,12 +2104,24 @@ export default function VocabGraph() {
           if (!s || typeof s === "string" || !t || typeof t === "string") return null;
           const lit = learnedSet.has(s.id) && learnedSet.has(t.id);
           const partiallyLit = learnedSet.has(s.id) || learnedSet.has(t.id);
+          // ── Densidad del grafo (slider) ──
+          // weight alto = enlace practicado muchas veces → SIEMPRE visible y más grueso.
+          // El slider sube/baja el umbral de visibilidad del resto; el backbone
+          // (ambas palabras learned) y los vecinos del nodo seleccionado no se ocultan.
+          const wEdge = l.weight ?? 0.5;
+          const edgeMinW = 0.15 + edgeDensity * 0.5; // umbral de visibilidad 0.15..0.65
+          const adjacentSel = selected ? (s.id === selected || t.id === selected) : false;
+          const ifLit = lit; // backbone: siempre
+          const ifPartially = (partiallyLit && (wEdge >= edgeMinW || adjacentSel)) || wEdge >= edgeMinW;
+          if (!ifLit && !ifPartially) return null;
+          // grosor por frecuencia de repaso: 0.8..2.6 según weight
+          const thick = 0.8 + Math.min(1, Math.max(0, (wEdge - 0.3) / 0.7)) * 1.8;
           return (
             <line
               key={i}
               x1={s.x} y1={s.y} x2={t.x} y2={t.y}
               stroke={lit ? "#6FBF8B" : partiallyLit ? "#D9A441" : "#33404a"}
-              strokeWidth={lit ? 1.8 : 1}
+              strokeWidth={lit ? Math.max(1.8, thick) : thick}
               strokeOpacity={
                 selected
                   ? (s.id === selected || t.id === selected ? 0.9 : 0.08)
@@ -2497,7 +2536,15 @@ export default function VocabGraph() {
                               ) : (
                                 <>
                                   {group.map((t) => {
-                                    const drills = buildDrills(t, 5);
+                                    // Slot & Filler dinámico: los drills usan las palabras
+                                    // registradas en el mapa del usuario (learned primero).
+                                    const mapWords = [
+                                      ...learnedArray,
+                                      ...Object.values(data.nodes)
+                                        .filter((n) => n?.kind !== "pattern" && n?.en)
+                                        .map((n) => n.en.toLowerCase()),
+                                    ].filter((w, i, a) => a.indexOf(w) === i);
+                                    const drills = buildDrills(t, 5, mapWords);
                                     const hist = patternHistory[t.id] || [];
                                     const got = pattCheck[t.id];
                                     const curDrill = patternNoun[t.id] || 0; // índice del drill actual
@@ -2894,7 +2941,9 @@ export default function VocabGraph() {
         if (!w) return null;
         const st = status(w.id);
         const examples = allExamplesFor(w.id);
-        const hasOwnImages = w.images && w.images.length > 0;
+        const isPatternNode = w.kind === "pattern";
+        // Pattern Nodes: SIN bloque de imágenes (la estructura no lleva foto).
+        const hasOwnImages = !isPatternNode && w.images && w.images.length > 0;
         return (
           <div style={styles.panelOverlay} onClick={() => setSelected(null)}>
             <div style={styles.panel} onClick={(e) => e.stopPropagation()}>
@@ -2902,7 +2951,12 @@ export default function VocabGraph() {
                 <X size={18} color="#9aa7ad" />
               </button>
 
-              {hasOwnImages ? (
+              {isPatternNode ? (
+                <div style={styles.patternNodeBanner}>
+                  <span style={styles.patternNodeCefr}>{w.cefr}</span>
+                  <span style={styles.patternNodeTitle}>{w.en}</span>
+                </div>
+              ) : hasOwnImages ? (
                 <div style={styles.gallery}>
                   {w.images.map((src, i) => (
                     <img key={i} src={src} alt={w.en} style={styles.galleryImg} />
@@ -3364,6 +3418,9 @@ const styles = {
   patternHistItem: { display: "inline-block", background: "#1c2530", border: "1px solid #2f3b42", color: "#8a9490", borderRadius: 8, padding: "2px 8px", fontSize: 11, marginRight: 6, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   patternSrsTag: { fontSize: 10.5, color: "#d9a441", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", border: "1px solid #4a3c1f", borderRadius: 10, padding: "1px 7px" },
   customPatternBox: { background: "#172429", border: "1px dashed #2a4145", borderRadius: 12, padding: "14px", marginBottom: 16 },
+  patternNodeBanner: { display: "flex", alignItems: "center", gap: 10, background: "#172429", border: "1px solid #2a4145", borderRadius: 10, padding: "12px 14px", marginBottom: 12 },
+  patternNodeCefr: { fontSize: 11, fontWeight: 700, color: "#8CC9D9", background: "#172a2f", border: "1px solid #2a4a52", borderRadius: 8, padding: "2px 8px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  patternNodeTitle: { fontSize: 14.5, color: "#eae4d8", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   customTitle: { fontSize: 15, color: "#9fd9b8", margin: "0 0 8px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   tierLabel: { fontSize: 12, color: "#6FBF8B", fontWeight: 700, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", textTransform: "uppercase", letterSpacing: 0.5, margin: "16px 0 8px", borderBottom: "1px solid #23362f", paddingBottom: 4 },
   tierDetails: { margin: "10px 0" },
@@ -3393,6 +3450,10 @@ const styles = {
   progressNum: { fontSize: 20, color: "#6FBF8B" },
   progressDen: { fontSize: 12, color: "#8a9490" },
   legendRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
+  densityBox: { display: "flex", alignItems: "center", gap: 8, background: "#1c2530", border: "1px solid #2f3b42", borderRadius: 10, padding: "6px 12px" },
+  densityLabel: { fontSize: 10.5, color: "#8a9490", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", textTransform: "uppercase", letterSpacing: 0.5 },
+  densitySlider: { width: 110, accentColor: "#6FBF8B", margin: 0 },
+  densityValue: { fontSize: 10.5, color: "#6FBF8B", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", minWidth: 34, textAlign: "right" },
   legend: { display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11.5, color: "#9aa7ad", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   legendItem: { display: "flex", alignItems: "center", gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: "50%", display: "inline-block" },
