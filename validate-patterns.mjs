@@ -1,5 +1,5 @@
 // Validación rápida de la lógica Pattern Nodes / CEFR (sin React)
-import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./src/data/patterns-cefr.js";
+import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./src/data/patterns-cefr.js";
 
 let fails = 0;
 function check(name, cond) {
@@ -62,6 +62,16 @@ console.log("— isAdvancedCefr —");
 check("A2 no avanzado", isAdvancedCefr("A2") === false);
 check("B2 avanzado", isAdvancedCefr("B2") === true);
 check("C2 avanzado", isAdvancedCefr("C2") === true);
+
+console.log("— Helpers de nivel (quiz adaptativo → UI legacy) —");
+check("cefrTier(A1)=beginner", cefrTier("A1") === "beginner");
+check("cefrTier(A2)=beginner", cefrTier("A2") === "beginner");
+check("cefrTier(B1)=intermediate", cefrTier("B1") === "intermediate");
+check("cefrTier(C2)=advanced", cefrTier("C2") === "advanced");
+check("resolveUserCefr prioriza data.cefr", resolveUserCefr({ cefr: "C1", level: "A1" }) === "C1");
+check("resolveUserCefr acepta level=rung CEFR", resolveUserCefr({ level: "B2" }) === "B2");
+check("resolveUserCefr mapea tier legacy", resolveUserCefr({ level: "beginner" }) === "A2");
+check("resolveUserCefr default A2", resolveUserCefr({}) === "A2" && resolveUserCefr(null) === "A2");
 
 console.log(fails === 0 ? "\nTODOS LOS TESTS PASAN ✓" : `\n${fails} TESTS FALLAN ✗`);
 process.exit(fails === 0 ? 0 : 1);
