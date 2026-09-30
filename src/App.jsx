@@ -5,7 +5,7 @@ import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, L
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
-import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
+import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Groq/Gemini and
@@ -667,22 +667,6 @@ const PATTERNS = [
     { id: "aGoingTo", en: "I'm going to ____ tomorrow", es: "Voy a ____ mañana", tier: 2 },
     ];
 
-    // Dificultad del patrón (progresiva): 1=inicial, 2=intermedio, 3=avanzado.
-    function patternTier(p) {
-      if (p.tier) return p.tier;
-      const s = (p.en || "").toLowerCase();
-      if (/if |could |would |been |used to|wish |depends on|looking forward|should |might |must |going to| will /.test(s)) return 3;
-      if (/likes|played|listened|worked|studied|yesterday|last |was |were |had /.test(s)) return 2;
-      return 1;
-    }
-    // Nivel máximo de patterns según el nivel de inglés del usuario (progresivo).
-        function maxTierForLevel(level) {
-          return level === "advanced" ? 3 : level === "intermediate" ? 2 : 1;
-        }
-        function tierName(t) {
-          return t === 3 ? "Avanzado" : t === 2 ? "Intermedio" : "Inicial";
-        }
-
     // Patrones PERSONALIZADOS por interés: se añaden a la biblioteca cuando el
     // interés coincide. La app se personaliza según los gustos del usuario, sin IA.
     const INTEREST_PATTERNS = [
@@ -965,34 +949,6 @@ const QUIZ_BANK = {
     { q: "Choose the correct cleft sentence.", options: ["What I need is a break.", "What I need it is a break.", "That I need is a break.", "What I need a break is."], correct: 0 },
   ],
 };
-// Legacy: tiers de 3 preguntas del onboarding original (siguen disponibles si
-// se quiere el formato fijo; el flujo nuevo usa QUIZ_BANK con escalera).
-const QUIZ_TIERS = {
-  beginner: [
-    { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
-    { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
-    { q: "Choose the correct sentence.", options: ["She don't like coffee.", "She doesn't like coffee.", "She not like coffee.", "She isn't like coffee."], correct: 1 },
-  ],
-  intermediate: [
-    { q: "I ___ to the store yesterday.", options: ["go", "goes", "went", "going"], correct: 2 },
-    { q: "I have been living here since 3 years.", options: ["I have been living here since 3 years.", "I have been living here for 3 years.", "I am living here since 3 years.", "I live here since 3 years."], correct: 1 },
-    { q: "By the time we arrived, the movie ___.", options: ["already started", "has already started", "had already started", "was already starting"], correct: 2 },
-  ],
-  advanced: [
-    { q: "Choose the correct sentence.", options: ["If I would have known, I would have called.", "If I had known, I would have called.", "If I knew, I would have called.", "If I have known, I would call."], correct: 1 },
-    { q: "The company's profits have ___ significantly this year.", options: ["rose", "raised", "risen", "rising"], correct: 2 },
-    { q: "Choose the sentence with correct usage.", options: ["I wish I would have more time.", "I wish I had more time.", "I wish I have more time.", "I wish I would had more time."], correct: 1 },
-  ],
-};
-const TIER_ORDER = ["beginner", "intermediate", "advanced"];
-
-function adjustedLevel(startLevel, score) {
-  const idx = TIER_ORDER.indexOf(startLevel);
-  if (score <= 1) return TIER_ORDER[Math.max(0, idx - 1)]; // struggled — one step down
-  if (score === 3) return TIER_ORDER[Math.min(TIER_ORDER.length - 1, idx + 1)]; // aced it — one step up
-  return startLevel; // 2/3 — about right
-}
-
 /* ── Quiz adaptativo: escalera CEFR (estructura preparada para producción) ──
    - startRung: rung inicial según el self-report (beginner→A1, intermediate→B1, advanced→B2).
    - Cada respuesta mueve el rung: correcto → +1, error → −1 (nunca fuera de A1..C2).
@@ -1486,7 +1442,7 @@ export default function VocabGraph() {
     // Beginners get every pre-written connecting sentence as scaffolding;
     // intermediate/advanced only get ONE as a reference — the rest has to
     // come from the learner's own writing.
-    const systemLimited = data?.level === "beginner" ? system : system.slice(0, 1);
+    const systemLimited = legacyTier === "beginner" ? system : system.slice(0, 1);
     const combined = [...mine, ...systemLimited];
     return combined.length ? combined : [{ sentence: node?.standalone, other: null }];
   };
@@ -1813,7 +1769,10 @@ export default function VocabGraph() {
   });
   // Pattern Nodes: los patterns visibles según el CEFR del usuario (en el mapa
   // SOLO se muestran los del techo del nivel; el resto queda oculto).
-  const userCefrNow = data?.cefr || TIER_TO_CEFR[data?.level] || "A2";
+  // CEFR resuelto (prioridad: cefr → level-CEFR → tier legacy) + su tier para
+  // las UIs que comparan contra "beginner"/"intermediate"/"advanced".
+  const userCefrNow = resolveUserCefr(data);
+  const legacyTier = cefrTier(userCefrNow);
   const visiblePatternIds = new Set(patternsForCefr(userCefrNow).map((p) => p.id));
   // Posición fija en anillo alrededor del mapa para cada pattern visible
   // (los patterns no entran en la simulación física de d3).
@@ -1913,8 +1872,8 @@ export default function VocabGraph() {
                   <span style={styles.progressDen}> / {totalCount} learned</span>
                   <select
                     style={styles.levelSelect}
-                    value={data.level || "advanced"}
-                    onChange={(e) => setData((prev) => ({ ...prev, level: e.target.value }))}
+                    value={legacyTier}
+                    onChange={(e) => setData((prev) => ({ ...prev, level: e.target.value, cefr: null }))}
                   >
                     <option value="beginner">Beginner</option>
                     <option value="intermediate">Intermediate</option>
@@ -1928,7 +1887,7 @@ export default function VocabGraph() {
                       intermediate: CEFR_ORDER.filter((c) => cefrIndex(c) <= cefrIndex("B1")),
                       advanced: CEFR_ORDER.filter((c) => cefrIndex(c) >= cefrIndex("B2")),
                     };
-                    const options = BLOCK_CEFRS[data.level] || BLOCK_CEFRS.beginner;
+                    const options = BLOCK_CEFRS[legacyTier] || BLOCK_CEFRS.beginner;
                     if (options.length <= 1) return null;
                     return (
                       <select
@@ -2445,10 +2404,10 @@ export default function VocabGraph() {
                                   <p style={styles.panelDef}>{w.def}</p>
                                   <SpeakInline text={w.def} size={15} />
                                 </div>
-                                {w.defEs && data.level === "beginner" && (
+                                {w.defEs && legacyTier === "beginner" && (
                                   <p style={styles.translationText}>{w.defEs}</p>
                                 )}
-                {w.defEs && data.level === "intermediate" && (
+                {w.defEs && legacyTier === "intermediate" && (
                   showTranslation ? (
                     <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
                   ) : (
@@ -2496,7 +2455,7 @@ export default function VocabGraph() {
                 )}
                 {reviewChecking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
 
-                {(data.level === "beginner" || reviewCheckResult) && (
+                {(legacyTier === "beginner" || reviewCheckResult) && (
                   <>
                     <div style={styles.exampleFooter}>
                       {ex.mine ? (
@@ -2598,7 +2557,7 @@ export default function VocabGraph() {
                       {/* Plantillas por nivel (SRS + drills dinámicos) — bloqueo igual que Practice */}
                       {(() => {
                         const bank = allPatternBank;
-                        const showEs = data.level !== "advanced";
+                        const showEs = legacyTier !== "advanced";
                         // desbloqueo: 2 patterns del nivel anterior (1 si el CEFR es B1+),
                         // y el nivel inicial adapta al CEFR del onboarding
                         const patternSrs = data.patternSrs || {};
@@ -3119,10 +3078,10 @@ export default function VocabGraph() {
                                       <SpeakInline text={w.def} size={16} />
                                     </div>
                   <p style={styles.tapHint}>tap any word above to add it too</p>
-                  {w.defEs && data.level === "beginner" && (
+                  {w.defEs && legacyTier === "beginner" && (
                     <p style={styles.translationText}>{w.defEs}</p>
                   )}
-                  {w.defEs && data.level === "intermediate" && (
+                  {w.defEs && legacyTier === "intermediate" && (
                     showTranslation ? (
                       <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
                     ) : (

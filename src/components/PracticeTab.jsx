@@ -8,7 +8,7 @@ import { PATTERN_LEVELS } from "../data/patterns.js";
 import { buildSeedGraph, indexGraph } from "../lib/graph.js";
 import { fillPattern } from "../lib/generator.js";
 import { conjugateVerb } from "../data/patterns.js";
-import { TIER_TO_CEFR, cefrIndex, isAdvancedCefr, templateAllowedForCefr } from "../data/patterns-cefr.js";
+import { cefrIndex, resolveUserCefr, isAdvancedCefr, templateAllowedForCefr } from "../data/patterns-cefr.js";
 
 const USER_GRAPH_KEY = "roots-graph-v1";
 
@@ -77,9 +77,9 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
   }, [wordbank]);
 
   // ── Unificación Patterns ↔ Practice Patterns ──
-  // CEFR del usuario (del onboarding): filtra qué plantillas se ofrecen y
-  // evita patrones elementales en niveles avanzados (B2/C1/C2).
-  const userCefr = data?.cefr || TIER_TO_CEFR[data?.level] || "A2";
+  // CEFR del usuario (del onboarding/quiz adaptativo): filtra qué plantillas
+  // se ofrecen y evita patrones elementales en niveles avanzados (B2/C1/C2).
+  const userCefr = resolveUserCefr(data);
   const userCefrIdx = cefrIndex(userCefr);
   const advanced = isAdvancedCefr(userCefr);
 

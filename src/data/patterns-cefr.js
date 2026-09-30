@@ -108,6 +108,29 @@ export const PATTERN_NODES = [
 
 /* ---------------- Adaptación dinámica por nivel de onboarding ---------------- */
 
+// CEFR → bloque legacy ("beginner"|"intermediate"|"advanced"): para las UI
+// que aún comparan contra el tier (traducciones, XP, andamiaje de ejemplos).
+// Con el quiz adaptativo, data.level ES un rung CEFR ("A1".."C2") — estas
+// comparaciones legacy deben pasar por aquí o dejan de funcionar.
+export function cefrTier(cefr) {
+  const i = cefrIndex(cefr);
+  if (i <= cefrIndex("A2")) return "beginner";
+  if (i <= cefrIndex("B1")) return "intermediate";
+  return "advanced";
+}
+
+// CEFR resuelto del usuario desde el objeto data: `cefr` tiene prioridad;
+// si `level` ya es un rung CEFR (quiz adaptativo) se usa directo; si es un
+// tier legacy ("beginner") se mapea; default A2.
+export function resolveUserCefr(dataLike) {
+  if (!dataLike) return "A2";
+  const cefr = String(dataLike.cefr || "").toUpperCase();
+  if (CEFR_ORDER.includes(cefr)) return cefr;
+  const lvl = dataLike.level ? String(dataLike.level).toUpperCase() : "";
+  if (CEFR_ORDER.includes(lvl)) return lvl;
+  return TIER_TO_CEFR[dataLike.level] || "A2";
+}
+
 // Patrones VISIBLES para un nivel CEFR: regla de techo — un nivel ve su propio
 // CEFR y los niveles inferiores ya dominados (1 grado por debajo). Los
 // elementales (A1) jamás se le inyectan a un avanzado (B2/C1/C2).
