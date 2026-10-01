@@ -2017,6 +2017,7 @@ export default function VocabGraph() {
   if (!data.onboarded) {
     return (
       <Onboarding
+        styles={styles}
         onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
           const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
