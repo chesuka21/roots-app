@@ -1,7 +1,9 @@
 import PracticeTab from "./components/PracticeTab.jsx";
+import Login from "./components/Login.jsx";
+import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play } from "lucide-react";
+import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel } from "./data/patterns.js";
@@ -427,13 +429,15 @@ async function generateWordDetails(word, existingWords) {
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
-{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
+{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "partOfSpeech": "noun|verb|adjective|adverb|phrasal verb|idiom", "sentenceFrames": [{"frame": "...", "es": "..."}], "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
 - "correctedWord": if "${word}" is a single misspelled word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already correct, or if it's a multi-word idiom/expression (like "cost an arm and a leg"), repeat it unchanged — don't try to reduce a phrase down to one dictionary word.
 - "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
+- "partOfSpeech": one of noun, verb, adjective, adverb, phrasal verb, idiom — whichever fits "correctedWord" best.
+- "sentenceFrames": 2 to 4 natural sentence templates where "correctedWord" fits, with ____ marking where OTHER words go (the word itself written out, never as ____). e.g. for "deadline": "The ____ is tomorrow", "We met the ____". "es" is the Spanish translation of the frame. These are map-first patterns: built from THIS word, not generic ones like "I drink [noun]".
 - "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
 
@@ -915,7 +919,7 @@ function buildGraphData() {
   });
   const edges = SEED_EDGES.map((e) => ({ source: e.a, target: e.b, sentence: e.s }));
   const srs = { study: initSrs() };
-    return { nodes: ensurePatternNodes(nodes), edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, cefr: null, progression: initProgression() };
+    return { nodes: ensurePatternNodes(nodes), edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, cefr: null, targetLanguage: "en", progression: initProgression() };
 }
 
 /* ---------- Placement quiz adaptativo (escala CEFR A1–C2, sin IA) ---------- */
@@ -1110,7 +1114,7 @@ export default function VocabGraph() {
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [form, setForm] = useState({ word: "", def: "", defEs: "", literal: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+  const [form, setForm] = useState({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
   const [manualLink, setManualLink] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
@@ -1147,6 +1151,11 @@ export default function VocabGraph() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settings, setSettings] = useState(loadVoiceSettings);
     const [showSettings, setShowSettings] = useState(false);
+    // ── Supabase Auth: sesión de nube + gate de login (opcional) ──
+    const [cloudSession, setCloudSession] = useState(null);
+    const [loginSkipped, setLoginSkipped] = useState(false);
+    const [cloudSyncing, setCloudSyncing] = useState(false);
+    const [cloudError, setCloudError] = useState("");
   // Slider de densidad del grafo (0..1): controla cuántas líneas se ven y el
   // grosor del enlace según frecuencia de repaso. Persistido en el mismo
   // objeto `data` (viaja con el mapa, como el resto del estado del Graph View).
@@ -1233,6 +1242,7 @@ export default function VocabGraph() {
                   // clave `cefr` en datos viejos sin romper lo ya guardado.
                   initial.nodes = ensurePatternNodes(initial.nodes);
                   if (!initial.cefr) initial.cefr = initial.level ? TIER_TO_CEFR[initial.level] || "A2" : null;
+                  if (!initial.targetLanguage) initial.targetLanguage = "en";
                   // Migración del slider de densidad del grafo.
                   if (typeof initial.edgeDensity !== "number") initial.edgeDensity = 0.35;
                   setEdgeDensity(initial.edgeDensity);
@@ -1257,6 +1267,33 @@ export default function VocabGraph() {
       /* storage full or unavailable — ignore */
     }
   }, [data, loaded]);
+
+  /* ── Supabase: detectar sesión (incluye el regreso de /auth/callback) + sync ── */
+  useEffect(() => {
+    if (!isCloudEnabled()) return;
+    getSession().then((s) => setCloudSession(s));
+    // onAuthStateChange cubre el redirect OAuth: el regreso con código → sesión lista
+    const sub = onAuthChange((event, s) => { if (s) setCloudSession(s); });
+    return () => { try { sub?.data?.subscription?.unsubscribe?.(); } catch (e) {} };
+  }, []);
+
+  // Cuando aparece una sesión (login OAuth completado): pull + marca login hecho
+  useEffect(() => {
+    if (!cloudSession || data?.onboarded) return;
+    setLoginSkipped(true);
+  }, [cloudSession]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync a la nube (debounced por los propios cambios de data): solo con sesión
+  useEffect(() => {
+    if (!cloudSession || !loaded || !data) return;
+    const t = setTimeout(() => {
+      syncAllToCloud(cloudSession.user.id, { ...data, targetLanguage: data.targetLanguage || "en" })
+        .then(() => { setCloudError(""); setCloudSyncing(false); })
+        .catch((e) => { setCloudError(String(e.message || e)); setCloudSyncing(false); });
+    }, 2500);
+    setCloudSyncing(true);
+    return () => clearTimeout(t);
+  }, [cloudSession, data, loaded]); // sync post-cambios, 2.5s debounce
 
   const colorFor = (cat) => {
     if (!catColorsRef.current[cat]) {
@@ -1641,6 +1678,9 @@ export default function VocabGraph() {
           defEs: form.defEs.trim(),
           literal: form.literal.trim(),
           cat: form.cat.trim() || "custom",
+          pos: form.pos?.trim() || null,          // partOfSpeech: noun/verb/adjective/phrasal verb/idiom
+          tags: form.pos?.trim() ? [form.pos.trim().toLowerCase()] : undefined,
+          sentenceFrames: form.sentenceFrames || [], // map-first patterns (frames IA de esta palabra)
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
           userExamples: [],
@@ -1657,7 +1697,7 @@ export default function VocabGraph() {
       }
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
-    setForm({ word: "", def: "", defEs: "", literal: "", cat: "", connections: [], sentence: "", images: [], imgInput: "" });
+    setForm({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
     setManualLink("");
     resetZoom();
     setActiveTab("map");
@@ -1673,6 +1713,8 @@ export default function VocabGraph() {
     let generatedCategory = form.cat;
         let generatedDefinition = form.def;
         let generatedWord = form.word.trim();
+        let generatedPos = null;
+        let generatedFrames = [];
         try {
           const { fromLocal, details } = await generateWordDetailsSmart(form.word.trim(), existingWords);
           const byName = {};
@@ -1693,12 +1735,16 @@ export default function VocabGraph() {
       generatedCategory = details.category || generatedCategory;
       generatedDefinition = details.definition || generatedDefinition;
       generatedWord = details.correctedWord || generatedWord;
+      generatedPos = details.partOfSpeech || generatedPos;
+      generatedFrames = details.sentenceFrames || generatedFrames;
       setForm((f) => ({
         ...f,
         word: details.correctedWord || f.word,
         def: details.definition || f.def,
         defEs: details.definitionEs || f.defEs,
         cat: details.category || f.cat,
+        pos: details.partOfSpeech || f.pos || "",
+        sentenceFrames: details.sentenceFrames || f.sentenceFrames || [],
         connections,
         sentence: connections[0]?.sentence || f.sentence,
       }));
@@ -1736,6 +1782,17 @@ export default function VocabGraph() {
 
   if (!data) return <div style={styles.app} />;
 
+  // ── Auth gate: Login (opcional) → Onboarding → App ──
+  if (!data.onboarded && !loginSkipped) {
+    return (
+      <Login
+        styles={styles}
+        onSkip={() => setLoginSkipped(true)}
+        onDone={() => setLoginSkipped(true)}
+      />
+    );
+  }
+
   if (!data.onboarded) {
     return (
       <Onboarding
@@ -1751,7 +1808,7 @@ export default function VocabGraph() {
               if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
             }
           }
-          return { ...prev, level, profile, onboarded: true, cefr: cefrFinal, nodes, edges: newEdges };
+          return { ...prev, level, profile, onboarded: true, cefr: cefrFinal, targetLanguage: prev.targetLanguage || "en", nodes, edges: newEdges };
         })}
       />
     );
@@ -1864,6 +1921,19 @@ export default function VocabGraph() {
                     <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
                       ⭐ Lv {xpLevel}
                     </span>
+                    {/* Supabase: sesión de nube (nube activa/sync/cuenta) */}
+                    {cloudSession ? (
+                      <span
+                        style={styles.cloudBadge}
+                        title={`Cuenta: ${cloudSession.user?.email || "Google"} · ${cloudSyncing ? "sincronizando…" : cloudError ? "error de sync" : "sincronizado"}`}
+                      >
+                        {cloudSyncing ? <Loader2 size={11} className="spin" /> : cloudError ? "⚠" : "☁"} {String(cloudSession.user?.email || "Google").split("@")[0]}
+                      </span>
+                    ) : (
+                      <button style={styles.cloudBadge} onClick={() => setLoginSkipped(false)} title="Iniciar sesión para guardar en la nube">
+                        <LogIn size={11} /> Login
+                      </button>
+                    )}
                   </div>
                   <div style={styles.xpBarWrap}>
                     <div style={{ ...styles.xpBarFill, width: `${Math.round(xpProgress * 100)}%` }} />
@@ -2051,6 +2121,33 @@ export default function VocabGraph() {
                             <Plus size={14} />
                           </button>
                         </div>
+
+                        {/* Supabase: cuenta / sync / cerrar sesión */}
+                        <div style={styles.lookupDivider} />
+                        <h2 style={styles.sectionTitle}>Cuenta</h2>
+                        {cloudSession ? (
+                          <>
+                            <p style={styles.sectionBody}>
+                              Sesión: <b>{cloudSession.user?.email || "Google"}</b> ·{" "}
+                              {cloudSyncing ? "sincronizando…" : cloudError ? <span style={{ color: "#d98c8c" }}>error de sync: {cloudError}</span> : "tu mapa se guarda en la nube automáticamente."}
+                            </p>
+                            <button
+                              style={styles.cloudSignOut}
+                              onClick={async () => { await signOut(); setCloudSession(null); }}
+                            >
+                              <LogOut size={13} /> Cerrar sesión
+                            </button>
+                          </>
+                        ) : isCloudEnabled() ? (
+                          <>
+                            <p style={styles.sectionBody}>Sin sesión — tu progreso vive solo en este navegador. Inicia sesión para sincronizarlo.</p>
+                            <button style={styles.cloudSignOut} onClick={() => setLoginSkipped(false)}>
+                              <LogIn size={13} /> Iniciar sesión con Google
+                            </button>
+                          </>
+                        ) : (
+                          <p style={styles.formHint}>Login no disponible en este deploy (faltan credenciales de Supabase).</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2553,6 +2650,60 @@ export default function VocabGraph() {
                           <Plus size={15} /> Añadir a mis plantillas
                         </button>
                       </div>
+
+                      {/* Map-first patterns: frames IA generados para las palabras REALES
+                          del mapa (sentenceFrames de cada nodo) — no plantillas genéricas */}
+                      {(() => {
+                        const mapFrames = Object.values(data.nodes)
+                          .filter((n) => n?.kind !== "pattern" && Array.isArray(n?.sentenceFrames) && n.sentenceFrames.length > 0)
+                          .flatMap((n) => n.sentenceFrames.map((f, i) => ({ id: `map-${n.id}-${i}`, word: n.en, wordId: n.id, frame: f.frame, es: f.es })));
+                        if (!mapFrames.length) return null;
+                        return (
+                          <div>
+                            <p style={styles.tierLabel}>From your map — patterns for YOUR words</p>
+                            <p style={styles.formHint}>Marcos generados para las palabras de tu mapa (nivel {userCefrNow}). Practícalos con tus propias frases — se registran en el SRS.</p>
+                            {mapFrames.slice(0, 12).map((f) => (
+                              <div key={f.id} style={styles.patternCard}>
+                                <div style={styles.patternTitleRow}>
+                                  <span style={styles.patternEn}>{f.frame}</span>
+                                  {data.level !== "advanced" && f.es && <span style={styles.patternEs}>{f.es}</span>}
+                                  <span style={{ ...styles.patternSrsTag, color: "#8CC9D9", borderColor: "#2a4a52" }}>{f.word}</span>
+                                </div>
+                                <input
+                                  style={styles.input}
+                                  value={pattInput[f.id] || ""}
+                                  onChange={(e) => { setPattInput((s) => ({ ...s, [f.id]: e.target.value })); setPattCheck((s) => { const c = { ...s }; delete c[f.id]; return c; }); }}
+                                  placeholder={`o escribe tu propia frase con "${f.word}"…`}
+                                />
+                                <button
+                                  style={styles.genBtn}
+                                  disabled={!pattInput[f.id] || !pattInput[f.id].trim() || pattChecking[f.id]}
+                                  onClick={async () => {
+                                    const text = pattInput[f.id].trim();
+                                    speak(text);
+                                    setPattChecking((s) => ({ ...s, [f.id]: true }));
+                                    try {
+                                      const r = await checkPattern(text);
+                                      setPattCheck((s) => ({ ...s, [f.id]: r }));
+                                      if (r.correct) { practicePattern(f.id); setPatternHistory((s) => ({ ...s, [f.id]: [...(s[f.id] || []), text] })); }
+                                    } catch (e) { setPattCheck((s) => ({ ...s, [f.id]: { correct: false, corrected: "", note: "No pude corregirlo: " + (e.message || e) } })); }
+                                    setPattChecking((s) => ({ ...s, [f.id]: false }));
+                                  }}
+                                >
+                                  {pattChecking[f.id] ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                                  {pattChecking[f.id] ? "Corrigiendo…" : "Practicar · escuchar · corregir"}
+                                </button>
+                                {pattCheck[f.id] && (
+                                  <div style={styles.patternResult}>
+                                    {pattCheck[f.id].correct ? <p style={{ ...styles.exampleEn, color: "#6FBF8B" }}>✓ {pattCheck[f.id].note || "Suena natural."}</p> : <p style={styles.exampleEn}>{pattCheck[f.id].corrected}</p>}
+                                    {!pattCheck[f.id].correct && pattCheck[f.id].note && <p style={styles.bridgeNote}>{pattCheck[f.id].note}</p>}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       {/* Plantillas por nivel (SRS + drills dinámicos) — bloqueo igual que Practice */}
                       {(() => {
@@ -3597,6 +3748,8 @@ const styles = {
     gamifyRow: { display: "flex", gap: 6, justifyContent: "flex-end", marginBottom: 4 },
     streakBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#d9a441", background: "#2a2417", border: "1px solid #4a3c1f", borderRadius: 12, padding: "2px 8px" },
     xpBadge: { fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#8cc9d9", background: "#172a2f", border: "1px solid #2a4a52", borderRadius: 12, padding: "2px 8px" },
+    cloudBadge: { fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#8CC9D9", background: "#172430", border: "1px solid #2a4a52", borderRadius: 12, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" },
+    cloudSignOut: { background: "transparent", border: "1px solid #4a3c1f", color: "#d9a441", borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", marginTop: 8 },
     xpBarWrap: { height: 5, background: "#232d32", borderRadius: 3, overflow: "hidden", marginBottom: 6, minWidth: 120 },
     xpBarFill: { height: "100%", background: "linear-gradient(90deg, #6FBF8B, #8cc9d9)", borderRadius: 3, transition: "width 0.4s ease" },
     xpToast: { position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 20, padding: "8px 16px", fontSize: 14, fontWeight: 600, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", zIndex: 70, boxShadow: "0 6px 20px rgba(0,0,0,0.5)", animation: "xpPop 0.25s ease" },
