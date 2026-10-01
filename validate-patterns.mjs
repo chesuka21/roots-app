@@ -18,7 +18,7 @@ const b1 = patternsForCefr("B1").map((p) => p.id);
 const b2 = patternsForCefr("B2").map((p) => p.id);
 const c1 = patternsForCefr("C1").map((p) => p.id);
 const c2 = patternsForCefr("C2").map((p) => p.id);
-check("A1 solo ve A1 (2 patrones)", a1.length === 2 && a1.every((id) => PATTERN_NODES.find((p) => p.id === id).cefr === "A1"));
+check("A1 solo ve A1 (4 patrones)", a1.length === 4 && a1.every((id) => PATTERN_NODES.find((p) => p.id === id).cefr === "A1"));
 check("B1 ve A2+B1 (8 patrones, sin A1)", !b1.includes("pat-sv") && !b1.includes("pat-svo") && b1.length === 8);
 check("B2 ve B1+B2 (9 patrones, sin A1/A2)", !b2.includes("pat-sv") && !b2.includes("pat-svo") && !b2.includes("pat-time") && b2.length === 9);
 check("B2 NO recibe patrones elementales", !b2.some((id) => ["A1", "A2"].includes(PATTERN_NODES.find((p) => p.id === id).cefr)));
