@@ -21,12 +21,16 @@ const LEVEL_META = {
 };
 
 // Patterns por nivel (frame con slots + keywords requeridos para validación local)
+// Nivel 4 (Avanzados B2/C1/C2): estructura compleja — SVO + conector formal
+// OBLIGATORIO (however/therefore/although/because…). Sin SVO infantil suelto.
 const PATTERN_BY_LEVEL = {
   1: { frame: [{ k: "subject" }, { k: "verb" }], needKeys: { subject: true, verb: true } },
   2: { frame: [{ k: "subject" }, { k: "verb" }, { k: "object" }], needKeys: { subject: true, verb: true, object: true } },
   3: { frame: [{ k: "subject" }, { k: "verb" }, { k: "object" }, { k: "time" }], needKeys: { subject: true, verb: true, object: true, time: true } },
-  4: { frame: [{ k: "subject" }, { k: "verb" }, { k: "object" }, { k: "place" }], needKeys: { subject: true, verb: true, object: true, place: true } },
+  4: { frame: [{ k: "subject" }, { k: "verb" }, { k: "object" }], needKeys: { subject: true, verb: true, object: true }, connectorRequired: true },
 };
+// Conectores formales válidos para el nivel avanzado
+const FORMAL_CONNECTORS = /\b(however|therefore|although|because|nevertheless|moreover|thus|since|whereas)\b/;
 
 // ---------- persistencia de aristas del usuario ----------
 function persistUserEdge(src, rel, dst, extraWeight = 0.02) {
@@ -201,6 +205,12 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
     }
     if (need.place && placeVal) {
       if (!low.includes(placeVal.toLowerCase())) issues.push(`Falta el lugar del patrón: agrega "${placeVal}".`);
+    }
+    // Nivel 4 (Avanzados): exige un conector formal/estructura compleja —
+    // la oración no puede ser un SVO suelto ("I eat meat" no basta aquí).
+    const levelDef = PATTERN_BY_LEVEL[levelId];
+    if (levelDef.connectorRequired && !FORMAL_CONNECTORS.test(low)) {
+      issues.push(`Nivel avanzado: usa una estructura compleja con un conector formal (however, therefore, although, because, whereas…). Un SVO simple no basta. Ej: "I was tired, however I studied."`);
     }
     return { ok: issues.length === 0, issues };
   }

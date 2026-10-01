@@ -4,7 +4,7 @@ import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
-import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS } from "./data/patterns.js";
+import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel } from "./data/patterns.js";
 import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
@@ -2599,11 +2599,22 @@ export default function VocabGraph() {
                                         .filter((n) => n?.kind !== "pattern" && n?.en)
                                         .map((n) => n.en.toLowerCase()),
                                     ].filter((w, i, a) => a.indexOf(w) === i);
-                                    const drills = buildDrills(t, 5, mapWords);
+                                    // Restricción semántica: los fillers del mapa SOLO
+                                    // entran si encajan con el tag del slot (nodesById
+                                    // resuelve cada palabra a su nodo/cat).
+                                    const nodesById = Object.fromEntries(
+                                      Object.values(data.nodes).filter((n) => n?.en).map((n) => [n.en.toLowerCase(), n])
+                                    );
+                                    const drills = buildDrills(t, 5, mapWords, nodesById);
+                                    // Nivel 4 (Avanzados): scaffolds complejos reemplazan
+                                    // el SVO infantil — condicionales, phrasal verbs,
+                                    // conectores formales y subordinadas.
+                                    const advancedScaffolds = lv.id === 4 ? scaffoldsForLevel(4) : [];
+                                    const drillSource = [...advancedScaffolds, ...drills];
                                     const hist = patternHistory[t.id] || [];
                                     const got = pattCheck[t.id];
                                     const curDrill = patternNoun[t.id] || 0; // índice del drill actual
-                                    const d = drills[Math.min(curDrill, drills.length - 1)];
+                                    const d = drillSource[Math.min(curDrill, drillSource.length - 1)];
                                     return (
                                       <div key={t.id} style={styles.patternCard}>
                                         <div style={styles.patternTitleRow}>
@@ -2613,7 +2624,7 @@ export default function VocabGraph() {
                                           {data.patternSrs?.[t.id] && <span style={styles.patternSrsTag}>interval {data.patternSrs[t.id].interval}d</span>}
                                         </div>
                                         <div style={styles.tagCloud}>
-                                          {drills.map((dd, i) => (
+                                          {drillSource.map((dd, i) => (
                                             <button key={i} style={curDrill === i ? styles.patternChipActive : styles.patternChip} onClick={() => setPatternNoun((s) => ({ ...s, [t.id]: i }))}>{dd.text}</button>
                                           ))}
                                         </div>
