@@ -6,7 +6,7 @@ import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
-import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel } from "./data/patterns.js";
+import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel, nodeMatchesTag } from "./data/patterns.js";
 import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
 /* ---------- AI + image helpers — call our own /api/* serverless
@@ -922,6 +922,51 @@ function buildGraphData() {
     return { nodes: ensurePatternNodes(nodes), edges, learned: ["study"], srs, level: null, profile: null, onboarded: false, cefr: null, targetLanguage: "en", progression: initProgression() };
 }
 
+/* ---------- Migración de nodos viejos: partOfSpeech + tags (Gemini) ----------
+   Los nodos guardados antes del sistema Map-First no tienen `pos` ni `tags`.
+   Al iniciar la app, las palabras sin pos se re-clasifican: primero el banco
+   local WORDBANK (0 tokens), y las que queden (palabras custom) van a Gemini
+   EN UN SOLO BATCH. Idempotente: solo toca nodos sin pos; guarda el resultado
+   en data.nodes para no re-clasificar nunca más. */
+async function classifyMissingPos(nodes) {
+  const missing = Object.values(nodes).filter((n) => n?.en && n?.kind !== "pattern" && !n?.pos);
+  if (!missing.length) return { nodes, usedAI: false, classified: 0 };
+
+  // 1) banco local primero (0 tokens)
+  const next = { ...nodes };
+  const rest = [];
+  for (const n of missing) {
+    const local = lookupLocalWord(n.en);
+    if (local?.pos) {
+      next[n.id] = { ...n, pos: local.pos, tags: [local.pos.toLowerCase()] };
+    } else {
+      rest.push(n);
+    }
+  }
+  let usedAI = false;
+  if (rest.length) {
+    // 2) Gemini en un solo batch: devuelve pos para cada palabra
+    const list = rest.map((n) => n.en).join(", ");
+    const prompt = `Classify each English word by part of speech: ${list}
+
+Return ONLY valid JSON, no markdown: {"items":[{"word":"...","pos":"noun|verb|adjective|adverb|phrasal verb|idiom"}]}
+Rules: one entry per word, spelled exactly as in the list. Multi-word entries ("cost an arm and a leg") are usually "idiom"; two-word verb constructions ("come up with") are "phrasal verb". Never use double quotes inside a value — use single quotes.`;
+    try {
+      const res = await callClaudeJson(prompt, 500);
+      const byName = {};
+      for (const it of res.items || []) if (it?.word && it?.pos) byName[String(it.word).toLowerCase()] = it.pos;
+      for (const n of rest) {
+        const pos = byName[n.en.toLowerCase()];
+        if (pos) next[n.id] = { ...n, pos, tags: [pos.toLowerCase()] };
+      }
+      usedAI = true;
+    } catch (e) {
+      console.error("[migrate] clasificacion IA fallo (sin pos fallback):", e.message);
+    }
+  }
+  return { nodes: next, usedAI, classified: missing.length - Object.values(next).filter((n) => n?.en && n?.kind !== "pattern" && !n?.pos).length };
+}
+
 /* ---------- Placement quiz adaptativo (escala CEFR A1–C2, sin IA) ---------- */
 /* Banco por rung CEFR: 2 preguntas por nivel. El quiz es una ESCALERA: empieza
    en el rung del self-report y cada respuesta mueve el rung (correcto → sube,
@@ -1258,6 +1303,22 @@ export default function VocabGraph() {
     // Vercel levante el contenedor antes de que lo necesites.
     try { fetch("/api/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "ping", max_tokens: 1 }) }).catch(() => {}); } catch (e) {}
   }, []);
+
+  /* ── Migración de nodos viejos: partOfSpeech + tags (banco local + Gemini batch) ──
+     Corre UNA vez tras la carga, solo si hay palabras sin pos. Idempotente. */
+  const posMigratedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || !data || posMigratedRef.current) return;
+    const missing = Object.values(data.nodes).filter((n) => n?.en && n?.kind !== "pattern" && !n?.pos);
+    if (!missing.length) { posMigratedRef.current = true; return; }
+    posMigratedRef.current = true;
+    classifyMissingPos(data.nodes).then(({ nodes, classified }) => {
+      if (classified > 0) {
+        setData((prev) => ({ ...prev, nodes }));
+        console.log(`[migrate] ${classified} nodos re-clasificados con pos/tags`);
+      }
+    }).catch(() => { /* silencio — la app funciona sin pos en nodos viejos */ });
+  }, [loaded, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!loaded || !data) return;
@@ -1777,6 +1838,19 @@ export default function VocabGraph() {
       connections: [...f.connections, { targetId: manualLink, sentence: "", checked: true }],
     }));
     setManualLink("");
+    // ── Actualización OPTIMISTA del grafo: la arista entra a `edges`
+    // INMEDIATAMENTE (sin esperar al "Save word") — el nodo no queda flotando.
+    // Forzar el rebuild del motor d3 (nodeCountRef no cambia con una sola
+    // arista, así que el efecto de sim no se dispararía solo).
+    const srcId = form.word.trim().toLowerCase().replace(/\s+/g, "-");
+    const targetId = manualLink;
+    if (!srcId) return;
+    setData((prev) => {
+      if (!prev.nodes?.[targetId] || prev.nodes?.[srcId]) return prev; // el arista nueva es para una palabra NO creada aún — el save word la conectará
+      return { ...prev, edges: [...prev.edges, { source: srcId, target: targetId, sentence: "" }] };
+    });
+    // forzar reconfiguración de la física de nodos con el nuevo enlace
+    nodeCountRef.current = -1;
   };
 
 
@@ -2757,11 +2831,26 @@ export default function VocabGraph() {
                                       Object.values(data.nodes).filter((n) => n?.en).map((n) => [n.en.toLowerCase(), n])
                                     );
                                     const drills = buildDrills(t, 5, mapWords, nodesById);
+                                    // ── Validación estricta en tiempo real (render) ──
+                                    // Si el slot exige un tag (ej. beverage) y el drill
+                                    // usa una palabra que no lo cumple, se descarta
+                                    // INMEDIATAMENTE y no se renderiza. Doble filtro:
+                                    // buildDrills ya filtra por tag; esto re-verifica
+                                    // cada drill contra el nodo real de cada filler.
+                                    const objectSlotTag = (t.frame || []).find((s) => typeof s !== "string" && s.k === "object")?.tag || null;
+                                    const strictDrills = objectSlotTag
+                                      ? drills.filter((dr) => {
+                                          const filler = dr.picks?.object;
+                                          if (!filler) return true;
+                                          const node = nodesById[String(filler).toLowerCase()];
+                                          return nodeMatchesTag(node || { cat: filler }, objectSlotTag);
+                                        })
+                                      : drills;
                                     // Nivel 4 (Avanzados): scaffolds complejos reemplazan
                                     // el SVO infantil — condicionales, phrasal verbs,
                                     // conectores formales y subordinadas.
                                     const advancedScaffolds = lv.id === 4 ? scaffoldsForLevel(4) : [];
-                                    const drillSource = [...advancedScaffolds, ...drills];
+                                    const drillSource = [...advancedScaffolds, ...strictDrills];
                                     const hist = patternHistory[t.id] || [];
                                     const got = pattCheck[t.id];
                                     const curDrill = patternNoun[t.id] || 0; // índice del drill actual
@@ -2913,10 +3002,42 @@ export default function VocabGraph() {
                       onClick={() => {
                         if (suggestChecked.size >= 1) {
                           const words = [...suggestChecked];
-                          setForm((f) => ({ ...f, word: words[0] }));
-                          setSuggestBatch(words.slice(1));
+                          // ── Bulk insert: TODAS las seleccionadas entran al mapa en
+                          // UNA sola operación (un setData con todos los nodos) — no
+                          // solo la primera. Los pattern links se crean para cada una.
+                          const userCefr = data.cefr || TIER_TO_CEFR[data.level] || "A2";
+                          setData((prev) => {
+                            const nodes = { ...prev.nodes };
+                            for (const w of words) {
+                              const id = w.toLowerCase().replace(/\s+/g, "-");
+                              if (nodes[id]) continue; // ya existe — no duplicar
+                              nodes[id] = {
+                                id,
+                                en: w,
+                                def: "",            // sin IA: definición opcional, se edita después
+                                defEs: "",
+                                cat: "custom",
+                                pos: null,
+                                images: [],
+                                standalone: w,
+                                userExamples: [],
+                              };
+                            }
+                            // pattern links para cada palabra nueva (techo CEFR)
+                            const newEdges = [...prev.edges];
+                            for (const w of words) {
+                              const id = w.toLowerCase().replace(/\s+/g, "-");
+                              if (!nodes[id] || nodes[id].cat !== "custom") continue;
+                              for (const e of linkWordToPatterns(nodes[id], userCefr)) {
+                                if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
+                              }
+                            }
+                            return { ...prev, nodes, edges: newEdges, learned: [...new Set([...prev.learned, ...words.map((w) => w.toLowerCase().replace(/\s+/g, "-"))])] };
+                          });
                           setSuggestResults(null);
                           setSuggestChecked(new Set());
+                          setSuggestBatch([]);
+                          setActiveTab("map");
                         }
                       }}
                     >
