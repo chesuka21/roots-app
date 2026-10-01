@@ -51,6 +51,25 @@ export async function signInWithGoogle() {
   if (error) throw error;
 }
 
+/* ---------- Email + password (alternativa a Google OAuth) ---------- */
+// Registro: crea el usuario (el trigger handle_new_user auto-crea su profile).
+// Si "Confirm email" está activo en Supabase, session viene null y el usuario
+// debe confirmar desde su correo — el caller lo comunica.
+export async function signUpEmail(email, password) {
+  if (!supabase) throw new Error(cloudDisabledReason() || "Supabase no configurado.");
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return { session: data?.session || null, user: data?.user || null, needsConfirm: !data?.session };
+}
+
+// Login con email+password ya registrado.
+export async function signInEmail(email, password) {
+  if (!supabase) throw new Error(cloudDisabledReason() || "Supabase no configurado.");
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return { session: data?.session || null, user: data?.user || null };
+}
+
 export async function signOut() {
   if (!supabase) return;
   await supabase.auth.signOut();
