@@ -45,6 +45,12 @@ export const PATTERN_NODES = [
   { id: "pat-sv", cefr: "A1", es: "[Sujeto] + [verbo]", label: "[Subject] + [verb]",
     frame: [{ k: "subject" }, { k: "verb" }],
     match: { cats: ["food", "drink", "feelings", "nature"], pos: ["verb"] } },
+  { id: "pat-svo-drink", cefr: "A1", es: "[Sujeto] + drink/beber + [bebida]", label: "[Subject] + drink + [beverage]",
+    frame: [{ k: "subject" }, { k: "verb", fixed: "drink" }, { k: "word", tag: "beverage" }],
+    match: { cats: ["drink", "food"], pos: ["noun"] } },
+  { id: "pat-svo-eat", cefr: "A1", es: "[Sujeto] + eat/comer + [comida]", label: "[Subject] + eat + [food]",
+    frame: [{ k: "subject" }, { k: "verb", fixed: "eat" }, { k: "word", tag: "food" }],
+    match: { cats: ["food"], pos: ["noun"] } },
 
   /* ── A2: rutinas y tiempo/lugar ── */
   { id: "pat-time", cefr: "A2", es: "[S+V+O] + [tiempo]", label: "[Subject] + [verb] + [object] + [time]",
@@ -91,7 +97,7 @@ export const PATTERN_NODES = [
     frame: [{ k: "subject" }, { k: "verb" }, { k: "word" }, { k: "connector" }, { k: "object" }],
     match: { cats: ["opinions", "work", "school", "news"], pos: ["verb", "adj", "noun"] } },
 
-  /* ── C1/C2: inversiones, collocations, estilo avanzado ── */
+  /* ── C1/C2: inversiones, collocations, subordinadas, estilo avanzado ── */
   { id: "pat-inversion", cefr: "C1", es: "Inversión (énfasis formal)", label: "Rarely/Never + [aux inversion] — formal emphasis",
     frame: [{ k: "adv-rare" }, { k: "have" }, { k: "subject" }, { k: "verb" }, { k: "word" }],
     match: { cats: ["opinions", "work", "school", "news"], pos: ["verb", "noun"] } },
@@ -104,6 +110,9 @@ export const PATTERN_NODES = [
   { id: "pat-cleft", cefr: "C2", es: "Cleft sentence (What... is...)", label: "What [Subject] + [verb] + is + [object] — énfasis",
     frame: [{ k: "verb", fixed: "What" }, { k: "subject" }, { k: "verb" }, { k: "be" }, { k: "word" }],
     match: { cats: ["opinions", "work", "school"], pos: ["verb", "noun"] } },
+  { id: "pat-relative", cefr: "C2", es: "Subordinada de relativo", label: "[Noun] + which/that + [Clause] — complex subordination",
+    frame: [{ k: "subject" }, { k: "be" }, { k: "word" }, { k: "connector" }, { k: "verb" }],
+    match: { cats: ["opinions", "work", "school", "news"], pos: ["noun", "verb"] } },
 ];
 
 /* ---------------- Adaptación dinámica por nivel de onboarding ---------------- */

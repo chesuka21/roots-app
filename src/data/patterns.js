@@ -37,6 +37,72 @@ export const SLOT_POOLS = {
   place: ["at home", "at school", "in the kitchen", "in the park", "at work", "here"],
 };
 
+/* ---------- Restricciones semánticas (Semantic Constraints / Tags) ----------
+   Un slot puede declarar qué categorías semánticas acepta: { k: "object",
+   tag: "beverage" }. Un filler solo entra si SU nodo en el mapa tiene esa
+   categoría (o un alias) — así "drink + ____" nunca produce "I drink math".
+   Tags = categorías del mapa (cat) + alias en minúscula; matching tolerante. */
+export const SEMANTIC_TAG_ALIASES = {
+  beverage: ["drink", "beverage", "liquid", "juice"],
+  food: ["food", "meal", "fruit", "meat"],
+  animal: ["animal", "pet", "wildlife"],
+  person: ["people", "person", "human", "family", "relationship"],
+  place: ["place", "home", "travel", "transport", "school", "work"],
+  time: ["time", "daily"],
+  feeling: ["feelings", "emotion", "emotion", "opinion"],
+  music: ["music", "song", "art"],
+  tech: ["tech", "tech_tools", "technology", "money"],
+  nature: ["nature", "space"],
+  action: ["actions", "verb"],
+};
+
+function normalizeTag(t) {
+  return String(t || "").toLowerCase().replace(/[^a-z_]/g, "");
+}
+
+// ¿El nodo (palabra del mapa) encaja con el tag semántico del slot?
+export function nodeMatchesTag(node, tag) {
+  if (!tag) return true; // slot sin restricción → acepta todo
+  const wanted = [normalizeTag(tag), ...(SEMANTIC_TAG_ALIASES[normalizeTag(tag)] || [])];
+  const nodeCats = [node?.cat, node?.tags].flat().filter(Boolean).map(normalizeTag);
+  const nodePos = normalizeTag(node?.pos);
+  // los verbos también encajan con el tag "action"
+  if (nodePos === "verb" && (wanted.includes("action") || wanted.includes("verb"))) return true;
+  return nodeCats.some((c) => wanted.includes(c));
+}
+
+// Filtra candidatos (strings) por el tag del slot, mirando sus nodos en el mapa.
+export function filterByTag(candidates, slot, nodesById) {
+  const tag = slot?.tag;
+  if (!tag) return candidates;
+  return candidates.filter((w) => nodeMatchesTag(nodesById?.[String(w).toLowerCase()] || { cat: w }, tag));
+}
+
+// ---- Scaffolds para niveles avanzados (B2/C1/C2): reemplazan el SVO infantil ----
+// Claves = nivel del slot-system (4=Avanzados). Cada scaffold es una estructura
+// compleja: condicionales, phrasal verbs, conectores formales, subordinadas.
+// Convenciones: strings = texto fijo; { k: "object" } = slot libre (pool propia
+// del scaffold). Los fillers del mapa solo entran si el slot lleva tag y encajan.
+export const SLOT_SCAFFOLDS = {
+  4: [
+    { id: "adv-cond", es: "Si yo tuviera ____, todo sería diferente",
+      frame: [{ k: "verb", fixed: "If I had" }, { k: "object" }, ", everything would be different"],
+      objectPool: ["more time", "more money", "a second chance", "better luck", "more practice"], level: 4 },
+    { id: "adv-mixed", es: "Condicional mixto (pasado → presente)",
+      frame: [{ k: "verb", fixed: "If I had" }, { k: "object" }, "then, things would be better now"],
+      objectPool: ["studied harder", "saved more", "started earlier", "listened to advice"], level: 4 },
+    { id: "adv-phrasal", es: "Phrasal verb: dar con / inventar",
+      frame: [{ k: "subject" }, { k: "verb", fixed: "come up with" }, { k: "object" }],
+      objectPool: ["an idea", "a solution", "a plan", "a compromise", "an alternative"], level: 4 },
+    { id: "adv-formal", es: "Conector formal: therefore",
+      frame: [{ k: "verb", fixed: "The project is" }, { k: "object" }, ", and therefore we postponed it"],
+      objectPool: ["too expensive", "too risky", "incomplete", "behind schedule"], level: 4 },
+    { id: "adv-subord", es: "Subordinada concesiva: Although",
+      frame: [{ k: "verb", fixed: "Although the day was" }, { k: "object" }, ", we kept practicing"],
+      objectPool: ["long", "busy", "difficult", "stressful"], level: 4 },
+  ],
+};
+
 // Conjugación 3ª persona (he/she/it) para no romper la gramática al sustituir
 // el subject: los verbos en 3ª persona añaden -s/-es. Simple y local.
 export function conjugateVerb(verb, subject) {
@@ -64,7 +130,8 @@ export function fillFrame(frame, picks) {
     if (val) return val;
     return `____`;
   });
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  // puntuación pegada a la palabra anterior: "more time , everything" → "more time, everything"
+  return parts.join(" ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
 }
 
 // Genera combinaciones dinámicas para practicar (drills): cambia un slot a la vez.
@@ -78,15 +145,20 @@ export function generateDrills(frame, picks, count = 6) {
 
 // Regenera N drills variando cada slot con opciones de las pools de la plantilla.
 // Slot & Filler dinámico: `mapWords` son las palabras registradas en el mapa
-// mental del usuario — se usan como fillers del hueco (merged con la pool de
-// la plantilla, capped para no explotar el render). Así el drill practica
-// vocabulario REAL, no listas genéricas.
-export function buildDrills(tpl, count = 6, mapWords = []) {
+// mental del usuario — se usan como fillers del hueco SOLO SI encajan con la
+// categoría semántica del slot (slot.tag → nodeMatchesTag vía nodesById).
+// Así "drink + ____" nunca produce "I drink math": math no es Noun:Beverage.
+export function buildDrills(tpl, count = 6, mapWords = [], nodesById = {}) {
   const out = [];
   const tplObjectPool = tpl.objectPool || SLOT_POOLS.object;
-  // palabras del mapa primero (vocabulario propio), luego la pool de la plantilla
-  const mergedObjectPool = mapWords.length
-    ? [...mapWords.slice(0, 20), ...tplObjectPool].filter((w, i, a) => a.indexOf(w) === i)
+  const objectSlot = (tpl.frame || []).find((s) => typeof s !== "string" && s.k === "object");
+  // palabras del mapa FILTRADAS por el tag del slot (si el slot lo declara),
+  // luego la pool de la plantilla (siempre segura — es la del propio patrón)
+  const fromMap = mapWords.length && objectSlot
+    ? filterByTag(mapWords, objectSlot, nodesById).slice(0, 20)
+    : [];
+  const mergedObjectPool = fromMap.length
+    ? [...fromMap, ...tplObjectPool].filter((w, i, a) => a.indexOf(w) === i)
     : tplObjectPool;
   const pools = {
     subject: tpl.subjectPool || SLOT_POOLS.subject,
@@ -112,6 +184,13 @@ export function buildDrills(tpl, count = 6, mapWords = []) {
     }
   }
   return out;
+}
+
+// Scaffolds disponibles para un nivel del slot-system: el 4 (Avanzados) usa
+// las estructuras complejas de SLOT_SCAFFOLDS en vez de repetir el SVO básico.
+export function scaffoldsForLevel(lvl) {
+  if (lvl === 4) return SLOT_SCAFFOLDS[4] || [];
+  return [];
 }
 
 // Convierte el texto "I drink ____ in the morning" del creador del usuario a
