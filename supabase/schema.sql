@@ -9,12 +9,26 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   level text,                          -- rung CEFR ("A1".."C2") o tier legacy
   cefr text,                           -- CEFR resuelto del quiz adaptativo
-  target_language text default 'en',   -- 'en' | 'es' | 'fr' | ... (multi-idioma futuro)
+  target_language text default 'en',   -- 'en' | 'es' | 'fr' | 'de' | 'pt' (multi-idioma futuro)
+  native_language text,                -- idioma nativo del usuario (paso 2 del onboarding)
+  name text,                           -- nombre/apodo (paso 1)
+  age int,                             -- edad (paso 1, opcional)
+  gender text,                         -- género (paso 1, opcional)
+  interests jsonb default '[]',        -- lista de intereses (paso 3, multi-selección)
+  job text,                            -- objetivo personal/estudios (paso 3)
   streak jsonb,                        -- { current, best, lastActive }
   progression jsonb,                   -- { xp, level, streak, wordExamplesEarned }
   onboarded boolean default false,
   updated_at timestamptz default now()
 );
+
+-- Migración para proyectos ya desplegados (columnas del onboarding de 4 pasos)
+alter table public.profiles add column if not exists native_language text;
+alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists age int;
+alter table public.profiles add column if not exists gender text;
+alter table public.profiles add column if not exists interests jsonb default '[]';
+alter table public.profiles add column if not exists job text;
 
 -- 2) words — nodos de palabras del mapa (1 fila por palabra por usuario)
 create table if not exists public.words (

@@ -366,9 +366,16 @@ Rules:
 
 async function suggestWordsForProfile(profile, existingWords, excludeWords = []) {
   const withInterests = profileInterestsLabel(profile);
-  const context = [profile?.job && `works as / studies: ${profile.job}`, withInterests && `interests: ${withInterests}`]
+  // El nombre personaliza el prompt (Gemini puede dirigirse al usuario); los
+  // intereses (paso 3 del onboarding, lista) alimentan la selección 70/30.
+  const userName = profile?.name ? `${profile.name}` : "";
+  const context = [
+    userName && `The learner's name is ${userName}.`,
+    profile?.job && `works as / studies: ${profile.job}`,
+    withInterests && `interests: ${withInterests}`,
+  ]
     .filter(Boolean)
-    .join("; ");
+    .join(" ");
 
   // ── Selección local: 70% afín a intereses + 30% amplio + fallback libre si pool < 5 ──
   const owned = new Set(existingWords.map((w) => String(w.en || w).toLowerCase()));
@@ -1015,8 +1022,15 @@ function pickQuizQuestion(rung, asked) {
   return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
 }
 
-function Onboarding({ onFinish }) {
-  const [step, setStep] = useState("self"); // "self" | "quiz" | "result" | "profile"
+function Onboarding({ onFinish, styles }) {
+  // ── Flujo progresivo de 4 pasos: perfil → idiomas → intereses → nivel ──
+  const [step, setStep] = useState("profile"); // "profile" | "languages" | "interests" | "self" | "quiz" | "result"
+  const [name, setName] = useState("");
+  const [age, setAge] = useState("");
+  const [gender, setGender] = useState("");
+  const [nativeLanguage, setNativeLanguage] = useState("es");
+  const [targetLanguage, setTargetLanguage] = useState("en");
+  const [interests, setInterests] = useState([]);
   const [selfReport, setSelfReport] = useState(null);
   const [quizIdx, setQuizIdx] = useState(0);
   const [rung, setRung] = useState(null); // rung CEFR actual de la escalera adaptativa
@@ -1025,8 +1039,10 @@ function Onboarding({ onFinish }) {
   const [picked, setPicked] = useState(null);
   const [finalLevel, setFinalLevel] = useState(null);
   const [finalCefr, setFinalCefr] = useState(null);
-  const [job, setJob] = useState("");
-  const [interests, setInterests] = useState("");
+
+  const profileValid = name.trim().length > 0; // nombre obligatorio; edad/género opcionales
+  const STEP_TITLES = { profile: "Perfil", languages: "Idiomas", interests: "Intereses", level: "Nivel" };
+  const stepNum = { profile: 1, languages: 2, interests: 3, self: 4, quiz: 4, result: 4 }[step] || 1;
 
   const startQuiz = (lvl) => {
     const startRung = SELF_TO_RUNG[lvl] || "A1";
@@ -1064,15 +1080,112 @@ function Onboarding({ onFinish }) {
     }, 350);
   };
 
+  const toggleInterest = (p) => {
+    setInterests((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]));
+  };
+
+  // Indicador de progreso de pasos (1..4)
+  const ProgressDots = () => (
+    <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: 2 }}>
+      {[1, 2, 3, 4].map((n) => (
+        <span key={n} style={{
+          width: n === stepNum ? 18 : 7, height: 7, borderRadius: 4,
+          background: n === stepNum ? "#6FBF8B" : n < stepNum ? "#3d504f" : "#2a343c",
+          transition: "all 0.25s ease",
+        }} />
+      ))}
+    </div>
+  );
+
   return (
     <div style={styles.app}>
       <div style={styles.onboardWrap}>
         <Sprout size={30} color="#6FBF8B" strokeWidth={1.4} />
         <h1 style={styles.title}>Roots</h1>
+        <ProgressDots />
+        <p style={{ ...styles.formHint, marginTop: 2 }}>Paso {stepNum} de 4 — {stepNum === 4 ? "Nivel" : STEP_TITLES[step]}</p>
 
+        {/* ── Paso 1: Perfil general (nombre, edad, género) ── */}
+        {step === "profile" && (
+          <>
+            <p style={styles.sectionBody}>¡Hola! Cuéntanos un poco sobre ti (tu nombre es lo único obligatorio).</p>
+            <label style={styles.label}>Nombre o apodo *</label>
+            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Chesuka, Ana, Profe…" autoComplete="given-name" />
+            <label style={styles.label}>Edad</label>
+            <input style={styles.input} type="number" min={5} max={99} value={age} onChange={(e) => setAge(e.target.value)} placeholder="e.g. 24" />
+            <label style={styles.label}>Género</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {["Femenino", "Masculino", "No binario", "Prefiero no decirlo"].map((g) => (
+                <button key={g} style={gender === g ? styles.patternChipActive : styles.patternChip} onClick={() => setGender(g)}>{g}</button>
+              ))}
+            </div>
+            <button style={styles.learnBtn} disabled={!profileValid} onClick={() => setStep("languages")}>
+              Continuar <ChevronRight size={16} />
+            </button>
+          </>
+        )}
+
+        {/* ── Paso 2: Idiomas (nativo + objetivo) ── */}
+        {step === "languages" && (
+          <>
+            <p style={styles.sectionBody}>¿Qué idioma hablas y cuál quieres aprender?</p>
+            <label style={styles.label}>Idioma nativo</label>
+            <select style={styles.input} value={nativeLanguage} onChange={(e) => setNativeLanguage(e.target.value)}>
+              <option value="es">Español</option>
+              <option value="en">Inglés</option>
+              <option value="fr">Francés</option>
+              <option value="de">Alemán</option>
+              <option value="pt">Portugués</option>
+            </select>
+            <label style={styles.label}>Idioma objetivo (a aprender)</label>
+            <select style={styles.input} value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
+              <option value="en">Inglés (recomendado)</option>
+              <option value="fr">Francés</option>
+              <option value="de">Alemán</option>
+              <option value="pt">Portugués</option>
+            </select>
+            <p style={styles.formHint}>Por ahora el contenido está optimizado para inglés — los demás idiomas llegarán pronto.</p>
+            <button style={styles.learnBtn} onClick={() => setStep("interests")}>
+              Continuar <ChevronRight size={16} />
+            </button>
+            <button style={styles.tab} onClick={() => setStep("profile")}>← Atrás</button>
+          </>
+        )}
+
+        {/* ── Paso 3: Intereses y objetivos (multi-selección) ── */}
+        {step === "interests" && (
+          <>
+            <p style={styles.sectionBody}>Elige tus gustos — la IA los usa para recomendarte vocabulario útil. (Opcional, puedes elegir varios.)</p>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+              {PRESET_INTERESTS.map((p) => (
+                <button key={p} style={interests.includes(p) ? styles.patternChipActive : styles.patternChip} onClick={() => toggleInterest(p)}>{p}</button>
+              ))}
+            </div>
+            <label style={styles.label}>¿Algún objetivo personal? (trabajo, estudios, viaje…)</label>
+            <input
+              style={styles.input}
+              value={interests.includes("__job__") ? "" : undefined}
+              onChange={() => {}}
+              placeholder="e.g. aprobar un examen, trabajar en tech"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && e.target.value.trim()) {
+                  const v = e.target.value.trim();
+                  setInterests((cur) => (cur.includes(v) ? cur : [...cur, v]));
+                  e.target.value = "";
+                }
+              }}
+            />
+            <button style={styles.learnBtn} disabled={interests.length === 0} onClick={() => setStep("self")}>
+              Continuar <ChevronRight size={16} />
+            </button>
+            <button style={styles.tab} onClick={() => setStep("languages")}>← Atrás</button>
+          </>
+        )}
+
+        {/* ── Paso 4: Nivel y diagnóstico (test adaptativo o manual) ── */}
         {step === "self" && (
           <>
-            <p style={styles.sectionBody}>How would you describe your English level right now?</p>
+            <p style={styles.sectionBody}>¿Cómo describirías tu nivel de inglés ahora?</p>
             {["beginner", "intermediate", "advanced"].map((lvl) => (
               <button key={lvl} style={styles.onboardOption} onClick={() => startQuiz(lvl)}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -1081,6 +1194,8 @@ function Onboarding({ onFinish }) {
                 </span>
               </button>
             ))}
+            <p style={{ ...styles.formHint, marginTop: 8 }}>O responde el test adaptativo de 5 preguntas — o elige tu nivel manualmente después.</p>
+            <button style={styles.tab} onClick={() => setStep("interests")}>← Atrás</button>
           </>
         )}
 
@@ -1129,20 +1244,31 @@ function Onboarding({ onFinish }) {
           </>
         )}
 
-        {step === "profile" && (
-          <>
-            <p style={styles.sectionBody}>
-              One more thing — this helps tailor word suggestions to you (a chef and a lawyer don't need the same vocabulary). Everything here is optional.
-            </p>
-            <label style={styles.label}>What do you do? (job, field of study, etc.)</label>
-            <input style={styles.input} value={job} onChange={(e) => setJob(e.target.value)} placeholder="e.g. chef, law student, nurse" />
-            <label style={styles.label}>Interests or hobbies</label>
-            <input style={styles.input} value={interests} onChange={(e) => setInterests(e.target.value)} placeholder="e.g. cooking, soccer, video games" />
-            <button style={styles.learnBtn} onClick={() => onFinish(finalLevel, finalCefr, { job: job.trim(), interests: interests.trim() })}>
-              Start learning <ChevronRight size={16} />
-            </button>
-          </>
-        )}
+        {step === "done" && (() => {
+          // Fin del flujo: onFinish con el perfil completo (paso 1-4)
+          const interestsFinal = [...interests.filter((i) => i !== "__job__")];
+          const jobText = interestsFinal.filter((i) => !PRESET_INTERESTS.some((p) => p.toLowerCase() === i.toLowerCase())).join(", ");
+          return (
+            <>
+              <p style={styles.sectionBody}>
+                ¡Listo, {name.trim() || "listo"}! Tu nivel: <b>{finalCefr || finalLevel}</b> · objetivo: <b>{targetLanguage === "en" ? "Inglés" : targetLanguage}</b>
+              </p>
+              <button
+                style={styles.learnBtn}
+                onClick={() => onFinish(finalLevel, finalCefr, {
+                  name: name.trim(),
+                  age: age ? Number(age) : null,
+                  gender: gender || null,
+                  native_language: nativeLanguage,
+                  interests: interestsFinal,
+                  job: jobText,
+                }, targetLanguage)}
+              >
+                Empezar a aprender <ChevronRight size={16} />
+              </button>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1338,10 +1464,31 @@ export default function VocabGraph() {
     return () => { try { sub?.data?.subscription?.unsubscribe?.(); } catch (e) {} };
   }, []);
 
-  // Cuando aparece una sesión (login OAuth completado): pull + marca login hecho
+  // Cuando aparece una sesión (login completado): pull del perfil desde la nube.
+  // Si el perfil en la nube tiene onboarded=false, el onboarding de 4 pasos
+  // reaparece (primera vez de ese usuario); si true, se restaura su perfil
+  // (name/interests/cefr) y entra directo a la app.
   useEffect(() => {
     if (!cloudSession || data?.onboarded) return;
     setLoginSkipped(true);
+    pullAllFromCloud(cloudSession.user.id).then((remote) => {
+      const prof = remote?.profiles;
+      if (!prof) return;
+      setData((prev) => ({
+        ...prev,
+        profile: {
+          ...(prev.profile || {}),
+          ...(prof.name ? { name: prof.name } : {}),
+          ...(prof.age != null ? { age: prof.age } : {}),
+          ...(prof.gender ? { gender: prof.gender } : {}),
+          ...(prof.native_language ? { native_language: prof.native_language } : {}),
+          ...(Array.isArray(prof.interests) && prof.interests.length ? { interests: prof.interests } : {}),
+        },
+        ...(prof.cefr ? { cefr: prof.cefr, level: prof.level || prof.cefr } : {}),
+        ...(prof.target_language ? { targetLanguage: prof.target_language } : {}),
+        ...(prof.onboarded ? { onboarded: true } : {}), // onboarded=false → onboarding reaparece
+      }));
+    }).catch(() => { /* sin pull — el usuario completa el onboarding local */ });
   }, [cloudSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync a la nube (debounced por los propios cambios de data): solo con sesión
@@ -1870,7 +2017,7 @@ export default function VocabGraph() {
   if (!data.onboarded) {
     return (
       <Onboarding
-        onFinish={(level, cefr, profile) => setData((prev) => {
+        onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
           const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
           const nodes = ensurePatternNodes(prev.nodes);
@@ -1882,7 +2029,14 @@ export default function VocabGraph() {
               if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
             }
           }
-          return { ...prev, level, profile, onboarded: true, cefr: cefrFinal, targetLanguage: prev.targetLanguage || "en", nodes, edges: newEdges };
+          // Perfil extendido del onboarding de 4 pasos: name/age/gender/
+          // native_language/interests + target_language del paso 2.
+          const profileFinal = {
+            ...(prev.profile || {}),
+            ...profile,
+            interests: profile?.interests ?? prev.profile?.interests ?? [],
+          };
+          return { ...prev, level, profile: profileFinal, onboarded: true, cefr: cefrFinal, targetLanguage: targetLang || "en", nodes, edges: newEdges };
         })}
       />
     );
