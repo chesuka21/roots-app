@@ -1238,7 +1238,7 @@ function Onboarding({ onFinish, styles }) {
                 {c}
               </button>
             ))}
-            <button style={styles.learnBtn} onClick={() => setStep("profile")}>
+            <button style={styles.learnBtn} onClick={() => setStep("done")}>
               Continue <ChevronRight size={16} />
             </button>
           </>
