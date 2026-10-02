@@ -2008,6 +2008,12 @@ export default function VocabGraph() {
 
   if (!data) return <div style={styles.app} />;
 
+  // ── i18n: el native_language del usuario determina el idioma de la INTERFAZ ──
+  // (el target_language sigue determinando solo las palabras/patrones a aprender)
+  // Declarado ANTES del gate de onboarding: el Onboarding lo recibe como prop.
+  const uiLang = data?.profile?.native_language || "es";
+  const t = (key) => translate(key, uiLang);
+
   // ── Auth gate: Login (opcional) → Onboarding → App ──
   if (!data.onboarded && !loginSkipped) {
     return (
@@ -2066,10 +2072,7 @@ export default function VocabGraph() {
   const userCefrNow = resolveUserCefr(data);
   const legacyTier = cefrTier(userCefrNow);
   const visiblePatternIds = new Set(patternsForCefr(userCefrNow).map((p) => p.id));
-  // ── i18n: el native_language del usuario determina el idioma de la INTERFAZ ──
-  // (el target_language sigue determinando solo las palabras/patrones a aprender)
-  const uiLang = data?.profile?.native_language || "es";
-  const t = (key) => translate(key, uiLang);
+  // (uiLang/t ya declarados antes del gate — ver arriba)
   // Posición fija en anillo alrededor del mapa para cada pattern visible
   // (los patterns no entran en la simulación física de d3).
   const patternNodePositions = (() => {
