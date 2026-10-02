@@ -3,7 +3,7 @@ import Login from "./components/Login.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut } from "lucide-react";
+import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel, nodeMatchesTag } from "./data/patterns.js";
@@ -1486,6 +1486,11 @@ export default function VocabGraph() {
         },
         ...(prof.cefr ? { cefr: prof.cefr, level: prof.level || prof.cefr } : {}),
         ...(prof.target_language ? { targetLanguage: prof.target_language } : {}),
+        // Gamificación desde la nube: XP/racha/progresión restaurados al iniciar
+        // sesión (si el remoto es más reciente que el local — mayor XP gana).
+        ...(prof.progression && (prof.progression.xp || 0) > ((prev.progression?.xp) || 0)
+          ? { progression: prof.progression }
+          : {}),
         ...(prof.onboarded ? { onboarded: true } : {}), // onboarded=false → onboarding reaparece
       }));
     }).catch(() => { /* sin pull — el usuario completa el onboarding local */ });
@@ -2148,7 +2153,7 @@ export default function VocabGraph() {
                                         <Flame size={11} style={{ verticalAlign: "-1px" }} /> {streakCurrent}
                                       </span>
                     <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
-                      ⭐ Lv {xpLevel}
+                      <Zap size={11} style={{ verticalAlign: "-1px" }} /> Lv {xpLevel}
                     </span>
                     {/* Supabase: sesión de nube (nube activa/sync/cuenta) */}
                     {cloudSession ? (
@@ -2613,9 +2618,9 @@ export default function VocabGraph() {
       </svg>
 
       <div style={styles.zoomControls}>
-        <button style={styles.zoomBtn} onClick={() => zoomBy(1.4)}>+</button>
-        <button style={styles.zoomBtn} onClick={() => zoomBy(1 / 1.4)}>−</button>
-        <button style={styles.zoomBtnReset} onClick={resetZoom}>reset</button>
+        <button style={styles.zoomBtn} onClick={() => zoomBy(1.4)} title="Acercar"><Plus size={15} /></button>
+        <button style={styles.zoomBtn} onClick={() => zoomBy(1 / 1.4)} title="Alejar"><Minus size={15} /></button>
+        <button style={styles.zoomBtnReset} onClick={resetZoom} title="Restablecer zoom"><RotateCcw size={11} /></button>
       </div>
       </div>
 
@@ -2640,7 +2645,7 @@ export default function VocabGraph() {
                 <p style={styles.formHint}>Learn a word on the Map first — then it shows up here.</p>
               ) : dueCount === 0 ? (
                 <>
-                  <p style={styles.progressNum}>🎉 All caught up!</p>
+                  <p style={styles.progressNum}><Trophy size={20} color="#d9a441" style={{ verticalAlign: "-3px" }} /> All caught up!</p>
                   <p style={styles.formHint}>Nothing's due today — come back tomorrow, or practice anyway (it won't rush your schedule).</p>
                   <button
                     style={styles.tab}
@@ -2838,7 +2843,7 @@ export default function VocabGraph() {
 
       {activeTab === "patterns" && (
                     <div style={styles.section}>
-                      <h2 style={styles.sectionTitle}><span style={{ color: "#6FBF8B" }}>Patterns</span> — slot & filler</h2>
+                      <h2 style={styles.sectionTitle}><Waves size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /><span style={{ color: "#6FBF8B" }}>Patterns</span> — slot & filler</h2>
                       <p style={styles.sectionBody}>
                         Plantillas con huecos (slots). El sistema genera combinaciones cambiando una parte a la vez —
                         tú pruebas, fallas, y la IA te corrige. Empieza por tu nivel y desbloquea el siguiente.
@@ -3163,9 +3168,11 @@ export default function VocabGraph() {
                           const userCefr = data.cefr || TIER_TO_CEFR[data.level] || "A2";
                           setData((prev) => {
                             const nodes = { ...prev.nodes };
+                            const freshIds = []; // solo las NUEVAS (no duplicadas) ganan XP
                             for (const w of words) {
                               const id = w.toLowerCase().replace(/\s+/g, "-");
                               if (nodes[id]) continue; // ya existe — no duplicar
+                              freshIds.push(id);
                               nodes[id] = {
                                 id,
                                 en: w,
@@ -3187,7 +3194,20 @@ export default function VocabGraph() {
                                 if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
                               }
                             }
-                            return { ...prev, nodes, edges: newEdges, learned: [...new Set([...prev.learned, ...words.map((w) => w.toLowerCase().replace(/\s+/g, "-"))])] };
+                            // ── Gamificación (bulk): XP por cada palabra NUEVA (×multiplier
+                            // del nivel) + racha activada + SRS inicial para que aparezcan
+                            // en el Review (mismo trato que markLearned, en batch) ──
+                            const mult = levelMultiplier(prev.level);
+                            const gained = Math.round(XP.learnWord * mult) * freshIds.length;
+                            let progression = prev.progression || initProgression();
+                            if (freshIds.length) {
+                              showXpToast(gained);
+                              progression = earnXp(progression, gained);
+                              progression = bumpStreak(progression);
+                            }
+                            const srs = { ...(prev.srs || {}) };
+                            for (const id of freshIds) if (!srs[id]) srs[id] = initSrs();
+                            return { ...prev, nodes, edges: newEdges, srs, progression, learned: [...new Set([...prev.learned, ...freshIds])] };
                           });
                           setSuggestResults(null);
                           setSuggestChecked(new Set());
