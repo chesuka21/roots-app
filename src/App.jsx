@@ -6,6 +6,7 @@ import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
 import TOP_WORDS from "./data/top1000.js";
+import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel, nodeMatchesTag } from "./data/patterns.js";
 import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
@@ -366,23 +367,21 @@ Rules:
 
 async function suggestWordsForProfile(profile, existingWords, excludeWords = []) {
   const withInterests = profileInterestsLabel(profile);
-  // El nombre personaliza el prompt (Gemini puede dirigirse al usuario); los
-  // intereses (paso 3 del onboarding, lista) alimentan la selección 70/30.
-  const userName = profile?.name ? `${profile.name}` : "";
+  // PRIVACIDAD: el nombre del usuario JAMÁS entra a los prompts de IA —
+  // los intereses (paso 3 del onboarding, lista) alimentan la selección 70/30.
   const context = [
-    userName && `The learner's name is ${userName}.`,
     profile?.job && `works as / studies: ${profile.job}`,
     withInterests && `interests: ${withInterests}`,
   ]
     .filter(Boolean)
-    .join(" ");
+    .join("; ");
 
   // ── Selección local: 70% afín a intereses + 30% amplio + fallback libre si pool < 5 ──
   const owned = new Set(existingWords.map((w) => String(w.en || w).toLowerCase()));
   const seen = new Set(excludeWords.map((w) => String(w).toLowerCase()));
   const pool = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
 
-  // El pool tiene ~2500 palabras; suficiente para años de práctica.
+  // El pool tiene 3,000+ palabras (Oxford/CEFR 3000); suficiente para años de práctica.
   // Si se acaba, no bloqueamos: la IA propone 5 libres.
   const candidates = pool.length >= 5
     ? (() => {
@@ -406,7 +405,7 @@ Rules:
 - "word": from the list, lowercase.
 - "why": under 10 words, why for them specifically.`
     : `An English learner has this profile: ${context || "no background given"}.
-You have exhausted the top-2500 list. Now suggest 5 useful words NOT in the top list (already shown declined: ${[...seen].join(", ")}).
+You have exhausted the top-3000 list. Now suggest 5 useful words NOT in the top list (already shown declined: ${[...seen].join(", ")}).
 Be creative, slightly outside their comfort zone.
 
 Return ONLY valid JSON, no markdown:
@@ -860,7 +859,7 @@ Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape
 
 Rules:
 - "correct": true if the sentence is natural and grammatically fine as written, false otherwise.
-- "corrected": the most natural correct version of the sentence (if it was already correct, repeat it unchanged).
+- "corrected": the most natural correct version of the sentence (if it was already correct, repeat it unchanged). Use neutral generic names in examples only when needed (Alex, Sam, Jordan) or pronouns (I, you, they) — NEVER the learner's real name or nickname.
 - "note": one short, encouraging sentence in simple English explaining what changed and why (or confirming it was correct). Under 20 words.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
   // 3) Llamamos a la IA con fallback local: si todos los proveedores fallan,
@@ -895,7 +894,7 @@ Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape
 Rules:
 - "usesBoth": true only if the sentence actually contains both "${word}" and "${connectedWord}" (or a natural form of each, like plurals or verb tenses).
 - "correct": true if the sentence is natural and grammatically fine as written.
-- "corrected": the most natural correct sentence that still uses both words (if it was already correct, repeat it unchanged). If "usesBoth" is false, write a good example sentence using both words instead, so they see what it should look like.
+- "corrected": the most natural correct sentence that still uses both words (if it was already correct, repeat it unchanged). If "usesBoth" is false, write a good example sentence using both words instead, so they see what it should look like. Use neutral generic names in examples only when needed (Alex, Sam, Jordan) or pronouns — NEVER the learner's real name or nickname.
 - "note": one short, encouraging sentence in simple English — if they missed one of the words, gently say so; otherwise explain what changed or confirm it was correct. Under 20 words.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
   return callClaudeJson(prompt, 500);
@@ -910,7 +909,7 @@ Rules:
   Return ONLY valid JSON: {"correct":true or false,"corrected":"...","note":"..."}
   Rules:
   - "correct": true if natural and grammatically fine as written.
-  - "corrected": the most natural correct version (repeat the sentence unchanged if already correct; keep their idea).
+  - "corrected": the most natural correct version (repeat the sentence unchanged if already correct; keep their idea). Use neutral generic names in examples only when needed (Alex, Sam, Jordan) or pronouns — NEVER the learner's real name or nickname.
   - "note": one short, encouraging sentence in simple English, under 20 words.
   - Never use double-quote characters (") inside any value — use single quotes.`;
     return callClaudeJson(prompt, 400);
@@ -1022,8 +1021,9 @@ function pickQuizQuestion(rung, asked) {
   return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
 }
 
-function Onboarding({ onFinish, styles }) {
+function Onboarding({ onFinish, styles, t = (k) => k }) {
   // ── Flujo progresivo de 4 pasos: perfil → idiomas → intereses → nivel ──
+  // Textos de la interfaz traducidos con `t` (native_language del usuario).
   const [step, setStep] = useState("profile"); // "profile" | "languages" | "interests" | "self" | "quiz" | "result"
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
@@ -1103,17 +1103,17 @@ function Onboarding({ onFinish, styles }) {
         <Sprout size={30} color="#6FBF8B" strokeWidth={1.4} />
         <h1 style={styles.title}>Roots</h1>
         <ProgressDots />
-        <p style={{ ...styles.formHint, marginTop: 2 }}>Paso {stepNum} de 4 — {stepNum === 4 ? "Nivel" : STEP_TITLES[step]}</p>
+        <p style={{ ...styles.formHint, marginTop: 2 }}>{t("Paso")} {stepNum} {t("de 4")} — {stepNum === 4 ? t("Nivel") : t(STEP_TITLES[step])}</p>
 
         {/* ── Paso 1: Perfil general (nombre, edad, género) ── */}
         {step === "profile" && (
           <>
-            <p style={styles.sectionBody}>¡Hola! Cuéntanos un poco sobre ti (tu nombre es lo único obligatorio).</p>
-            <label style={styles.label}>Nombre o apodo *</label>
+            <p style={styles.sectionBody}>{t("¡Hola! Cuéntanos un poco sobre ti (tu nombre es lo único obligatorio).")}</p>
+            <label style={styles.label}>{t("Nombre o apodo *")}</label>
             <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Chesuka, Ana, Profe…" autoComplete="given-name" />
-            <label style={styles.label}>Edad</label>
+            <label style={styles.label}>{t("Edad")}</label>
             <input style={styles.input} type="number" min={5} max={99} value={age} onChange={(e) => setAge(e.target.value)} placeholder="e.g. 24" />
-            <label style={styles.label}>Género</label>
+            <label style={styles.label}>{t("Género")}</label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {["Femenino", "Masculino", "No binario", "Prefiero no decirlo"].map((g) => (
                 <button key={g} style={gender === g ? styles.patternChipActive : styles.patternChip} onClick={() => setGender(g)}>{g}</button>
@@ -1128,8 +1128,8 @@ function Onboarding({ onFinish, styles }) {
         {/* ── Paso 2: Idiomas (nativo + objetivo) ── */}
         {step === "languages" && (
           <>
-            <p style={styles.sectionBody}>¿Qué idioma hablas y cuál quieres aprender?</p>
-            <label style={styles.label}>Idioma nativo</label>
+            <p style={styles.sectionBody}>{t("¿Qué idioma hablas y cuál quieres aprender?")}</p>
+            <label style={styles.label}>{t("Idioma nativo")}</label>
             <select style={styles.input} value={nativeLanguage} onChange={(e) => setNativeLanguage(e.target.value)}>
               <option value="es">Español</option>
               <option value="en">Inglés</option>
@@ -1137,7 +1137,7 @@ function Onboarding({ onFinish, styles }) {
               <option value="de">Alemán</option>
               <option value="pt">Portugués</option>
             </select>
-            <label style={styles.label}>Idioma objetivo (a aprender)</label>
+            <label style={styles.label}>{t("Idioma objetivo (a aprender)")}</label>
             <select style={styles.input} value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
               <option value="en">Inglés (recomendado)</option>
               <option value="fr">Francés</option>
@@ -1148,20 +1148,20 @@ function Onboarding({ onFinish, styles }) {
             <button style={styles.learnBtn} onClick={() => setStep("interests")}>
               Continuar <ChevronRight size={16} />
             </button>
-            <button style={styles.tab} onClick={() => setStep("profile")}>← Atrás</button>
+            <button style={styles.tab} onClick={() => setStep("profile")}>{t("Atrás")}</button>
           </>
         )}
 
         {/* ── Paso 3: Intereses y objetivos (multi-selección) ── */}
         {step === "interests" && (
           <>
-            <p style={styles.sectionBody}>Elige tus gustos — la IA los usa para recomendarte vocabulario útil. (Opcional, puedes elegir varios.)</p>
+            <p style={styles.sectionBody}>{t("Elige tus gustos — la IA los usa para recomendarte vocabulario útil. (Opcional, puedes elegir varios.)")}</p>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
               {PRESET_INTERESTS.map((p) => (
                 <button key={p} style={interests.includes(p) ? styles.patternChipActive : styles.patternChip} onClick={() => toggleInterest(p)}>{p}</button>
               ))}
             </div>
-            <label style={styles.label}>¿Algún objetivo personal? (trabajo, estudios, viaje…)</label>
+            <label style={styles.label}>{t("¿Algún objetivo personal? (trabajo, estudios, viaje…)")}</label>
             <input
               style={styles.input}
               value={interests.includes("__job__") ? "" : undefined}
@@ -1178,14 +1178,14 @@ function Onboarding({ onFinish, styles }) {
             <button style={styles.learnBtn} disabled={interests.length === 0} onClick={() => setStep("self")}>
               Continuar <ChevronRight size={16} />
             </button>
-            <button style={styles.tab} onClick={() => setStep("languages")}>← Atrás</button>
+            <button style={styles.tab} onClick={() => setStep("languages")}>{t("Atrás")}</button>
           </>
         )}
 
         {/* ── Paso 4: Nivel y diagnóstico (test adaptativo o manual) ── */}
         {step === "self" && (
           <>
-            <p style={styles.sectionBody}>¿Cómo describirías tu nivel de inglés ahora?</p>
+            <p style={styles.sectionBody}>{t("¿Cómo describirías tu nivel de inglés ahora?")}</p>
             {["beginner", "intermediate", "advanced"].map((lvl) => (
               <button key={lvl} style={styles.onboardOption} onClick={() => startQuiz(lvl)}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -1195,7 +1195,7 @@ function Onboarding({ onFinish, styles }) {
               </button>
             ))}
             <p style={{ ...styles.formHint, marginTop: 8 }}>O responde el test adaptativo de 5 preguntas — o elige tu nivel manualmente después.</p>
-            <button style={styles.tab} onClick={() => setStep("interests")}>← Atrás</button>
+            <button style={styles.tab} onClick={() => setStep("interests")}>{t("Atrás")}</button>
           </>
         )}
 
@@ -1228,7 +1228,7 @@ function Onboarding({ onFinish, styles }) {
                 ? "Translations will be hidden but one tap away when you need them."
                 : "The app will stay 100% English — no translations shown."}
             </p>
-            <label style={styles.label}>Not right? Pick your sub-level manually:</label>
+            <label style={styles.label}>{t("Not right? Pick your sub-level manually:")}</label>
             {CEFR_ORDER.map((c) => (
               <button
                 key={c}
@@ -2023,6 +2023,7 @@ export default function VocabGraph() {
     return (
       <Onboarding
         styles={styles}
+        t={t}
         onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
           const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
@@ -2065,6 +2066,10 @@ export default function VocabGraph() {
   const userCefrNow = resolveUserCefr(data);
   const legacyTier = cefrTier(userCefrNow);
   const visiblePatternIds = new Set(patternsForCefr(userCefrNow).map((p) => p.id));
+  // ── i18n: el native_language del usuario determina el idioma de la INTERFAZ ──
+  // (el target_language sigue determinando solo las palabras/patrones a aprender)
+  const uiLang = data?.profile?.native_language || "es";
+  const t = (key) => translate(key, uiLang);
   // Posición fija en anillo alrededor del mapa para cada pattern visible
   // (los patterns no entran en la simulación física de d3).
   const patternNodePositions = (() => {
@@ -2141,7 +2146,7 @@ export default function VocabGraph() {
           <Sprout size={22} color="#6FBF8B" strokeWidth={1.6} />
           <div>
             <h1 style={styles.title}>Roots</h1>
-            <p style={styles.subtitle}>your vocabulary, growing like roots</p>
+            <p style={styles.subtitle}>{t("your vocabulary, growing like roots")}</p>
           </div>
         </div>
         <div style={styles.progress}>
@@ -2173,7 +2178,7 @@ export default function VocabGraph() {
                     <div style={{ ...styles.xpBarFill, width: `${Math.round(xpProgress * 100)}%` }} />
                   </div>
                   <span style={styles.progressNum}>{learnedCount}</span>
-                  <span style={styles.progressDen}> / {totalCount} learned</span>
+                  <span style={styles.progressDen}> / {totalCount} {t("learned")}</span>
                   <select
                     style={styles.levelSelect}
                     value={legacyTier}
@@ -2281,6 +2286,19 @@ export default function VocabGraph() {
                         <div style={styles.lookupDivider} />
                                                 <h2 style={styles.sectionTitle}>Intereses</h2>
                                                 <p style={styles.sectionBody}>Los usa la IA para recomendarte vocabulario útil. Añade los que quieras, en cualquier momento.</p>
+
+                        {/* i18n: idioma de la INTERFAZ (native_language) */}
+                        <label style={styles.label}>Idioma de la interfaz</label>
+                        <select
+                          style={styles.input}
+                          value={uiLang}
+                          onChange={(e) => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: e.target.value } }))}
+                          title="Cambia TODA la interfaz a este idioma — las palabras a aprender siguen en su idioma objetivo"
+                        >
+                          {SUPPORTED_LANGUAGES.map((c) => (
+                            <option key={c} value={c}>{languageLabel(c)}</option>
+                          ))}
+                        </select>
 
                         {currentInterests.length > 0 && (
                           <div style={styles.tagCloud}>
@@ -2391,14 +2409,14 @@ export default function VocabGraph() {
                         <button
                           style={activeTab === "map" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("map")}
-                          title="Map"
+                          title={t("Map")}
                         >
                           <MapIcon size={19} />
                         </button>
                         <button
                                             style={activeTab === "review" ? styles.railBtnActive : styles.railBtn}
                                             onClick={() => setActiveTab("review")}
-                                            title="Review"
+                                            title={t("Review")}
                                           >
                                             <Layers size={19} />
                                             {dueCount > 0 && <span style={styles.railBadge}>{dueCount > 99 ? "99+" : dueCount}</span>}
@@ -2406,28 +2424,28 @@ export default function VocabGraph() {
                                           <button
                                             style={activeTab === "patterns" ? styles.railBtnActive : styles.railBtn}
                                             onClick={() => setActiveTab("patterns")}
-                                            title="Patterns"
+                                            title={t("Patterns")}
                                           >
                                             <Waves size={19} />
                                           </button>
                         <button
                           style={activeTab === "add" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("add")}
-                          title="Add word"
+                          title={t("Add word")}
                         >
                           <Plus size={19} />
                         </button>
                         <button
                           style={activeTab === "practice" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("practice")}
-                          title="Practice (patterns dinámicos)"
+                          title={t("Practice (patterns dinámicos)")}
                         >
                           <Play size={19} />
                         </button>
                         <button
                           style={activeTab === "lookup" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("lookup")}
-                          title="Lookup"
+                          title={t("Lookup")}
                         >
                           <Search size={19} />
                         </button>
