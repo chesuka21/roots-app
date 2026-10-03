@@ -118,6 +118,7 @@ export const TRANSLATIONS = {
     "Iniciar sesión para guardar en la nube": "Sign in to save to the cloud",
     "Sub-nivel CEFR — define qué patrones se practican": "CEFR sub-level — defines which patterns you practice",
     "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo": "Graph density: fewer lines = practiced links only; more = full map",
+    "¿Qué idioma hablas y cuál quieres aprender?": "What language do you speak, and which one do you want to learn?",
   },
   es: {
     // — navegación —
@@ -233,6 +234,7 @@ export const TRANSLATIONS = {
     "Iniciar sesión para guardar en la nube": "Iniciar sesión para guardar en la nube",
     "Sub-nivel CEFR — define qué patrones se practican": "Subnivel CEFR — define qué patrones se practican",
     "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo": "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo",
+    "¿Qué idioma hablas y cuál quieres aprender?": "¿Qué idioma hablas y cuál quieres aprender?",
   },
   fr: {
     // — navigation —
@@ -348,6 +350,7 @@ export const TRANSLATIONS = {
     "Iniciar sesión para guardar en la nube": "Connecte-toi pour sauvegarder dans le cloud",
     "Sub-nivel CEFR — define qué patrones se practican": "Sous-niveau CECR — définit les structures que tu pratiques",
     "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo": "Densité du graphe : moins de lignes = liens pratiqués seulement ; plus = carte complète",
+    "¿Qué idioma hablas y cuál quieres aprender?": "Quelle langue parles-tu, et laquelle veux-tu apprendre ?",
   },
   de: {
     // — Navigation —
@@ -463,6 +466,7 @@ export const TRANSLATIONS = {
     "Iniciar sesión para guardar en la nube": "Melde dich an, um in der Cloud zu speichern",
     "Sub-nivel CEFR — define qué patrones se practican": "CEFR-Unterniveau — legt fest, welche Muster du übst",
     "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo": "Graphdichte: weniger Linien = nur geübte Verbindungen; mehr = volle Karte",
+    "¿Qué idioma hablas y cuál quieres aprender?": "Welche Sprache sprichst du, und welche möchtest du lernen?",
   },
   pt: {
     // — navegação —
@@ -578,6 +582,7 @@ export const TRANSLATIONS = {
     "Iniciar sesión para guardar en la nube": "Entre para salvar na nuvem",
     "Sub-nivel CEFR — define qué patrones se practican": "Subnível CEFR — define quais padrões você pratica",
     "Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo": "Densidade do grafo: menos linhas = só links praticados; mais = mapa completo",
+    "¿Qué idioma hablas y cuál quieres aprender?": "Que idioma você fala e qual quer aprender?",
   },
 };
 
