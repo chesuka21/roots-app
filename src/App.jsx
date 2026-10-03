@@ -1,5 +1,6 @@
 import PracticeTab from "./components/PracticeTab.jsx";
 import Login from "./components/Login.jsx";
+import LanguageGate from "./components/LanguageGate.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
@@ -1187,7 +1188,7 @@ function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLan
             <p style={styles.sectionBody}>{t("Elige tus gustos — la IA los usa para recomendarte vocabulario útil. (Opcional, puedes elegir varios.)")}</p>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
               {PRESET_INTERESTS.map((p) => (
-                <button key={p} style={interests.includes(p) ? styles.patternChipActive : styles.patternChip} onClick={() => toggleInterest(p)}>{p}</button>
+                <button key={p} style={interests.includes(p) ? styles.patternChipActive : styles.patternChip} onClick={() => toggleInterest(p)}>{t(p)}</button>
               ))}
             </div>
             <label style={styles.label}>{t("¿Algún objetivo personal? (trabajo, estudios, viaje…)")}</label>
@@ -1219,7 +1220,7 @@ function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLan
               <button key={lvl} style={styles.onboardOption} onClick={() => startQuiz(lvl)}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   {lvl === "beginner" ? <Sprout size={15} color="#6FBF8B" /> : lvl === "intermediate" ? <Waves size={15} color="#D9A441" /> : <Layers size={15} color="#8CC9D9" />}
-                  {lvl === "beginner" ? "Beginner — just starting out" : lvl === "intermediate" ? "Intermediate — I get by" : "Advanced — pretty comfortable"}
+                  {lvl === "beginner" ? t("Beginner — just starting out") : lvl === "intermediate" ? t("Intermediate — I get by") : t("Advanced — pretty comfortable")}
                 </span>
               </button>
             ))}
@@ -2036,11 +2037,23 @@ export default function VocabGraph() {
 
   if (!data) return <div style={styles.app} />;
 
-  // ── i18n: el native_language del usuario determina el idioma de la INTERFAZ ──
+  // ── i18n: el native_language determina el idioma de la INTERFAZ ──
   // (el target_language sigue determinando solo las palabras/patrones a aprender)
-  // Declarado ANTES del gate de onboarding: el Onboarding lo recibe como prop.
+  // Declarado ANTES del gate: LanguageGate y Onboarding lo reciben como prop.
   const uiLang = data?.profile?.native_language || "es";
   const t = (key) => translate(key, uiLang);
+
+  // ── Language Gate: selector de idioma ANTES DEL LOGIN (solo la 1ª vez) ──
+  if (!data.onboarded && !data.profile?.native_language) {
+    return (
+      <LanguageGate
+        styles={styles}
+        current={data.profile?.native_language || null}
+        onPick={(lang) => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: lang } }))}
+        onContinue={() => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: prev.profile?.native_language || "es" } }))}
+      />
+    );
+  }
 
   // ── Auth gate: Login (opcional) → Onboarding → App ──
   if (!data.onboarded && !loginSkipped) {
@@ -2368,7 +2381,7 @@ export default function VocabGraph() {
                                   }))
                                 }
                               >
-                                <Plus size={11} /> {p}
+                                <Plus size={11} /> {t(p)}
                               </button>
                             ))}
                           </div>
