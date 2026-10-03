@@ -1,13 +1,14 @@
 /* ---------- Login UI — Supabase Auth (Google OAuth + email/password) ----------
-   Pantalla previa al onboarding. Dos vías: Google OAuth (redirect) o
-   email+password (signUp / signInWithPassword). Si la nube está apagada (sin
-   credenciales), "continuar sin cuenta" permite usar la app 100% offline.
-   El login NUNCA bloquea: es opcional por diseño. */
+   Pantalla de login/registro tras el Language Gate. Dos vías: Google OAuth
+   (redirect) o email+password (signUp / signInWithPassword). Si la nube está
+   apagada (sin credenciales), "continuar sin cuenta" permite usar la app
+   100% offline. El login NUNCA bloquea: es opcional por diseño.
+   TODOS los textos de la interfaz viajan por `t` (native_language del gate). */
 import { useState } from "react";
 import { Sprout, ChevronRight, Loader2, LogIn, CloudOff, Mail, UserPlus } from "lucide-react";
 import { signInWithGoogle, signInEmail, signUpEmail, isCloudEnabled, cloudDisabledReason } from "../lib/supabaseClient.js";
 
-export default function Login({ onSkip, onDone, styles }) {
+export default function Login({ onSkip, onDone, styles, t = (k) => k }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -24,7 +25,7 @@ export default function Login({ onSkip, onDone, styles }) {
       await signInWithGoogle(); // redirige a Google y vuelve a /auth/callback
       // el redirect recarga la app; onDone se llama desde App al detectar la sesión
     } catch (e) {
-      setError(`No pude iniciar sesión: ${e.message || e}`);
+      setError(`${t("No pude iniciar sesión")}: ${e.message || e}`);
       setBusy(false);
     }
   };
@@ -38,7 +39,7 @@ export default function Login({ onSkip, onDone, styles }) {
       if (isSignup) {
         const { needsConfirm } = await signUpEmail(email.trim(), password);
         if (needsConfirm) {
-          setNotice("Cuenta creada — revisa tu correo para confirmarla y luego inicia sesión.");
+          setNotice(t("Cuenta creada — revisa tu correo para confirmarla y luego inicia sesión."));
           setIsSignup(false); // pasar a login tras confirmar
         } else {
           onDone?.(); // sesión inmediata
@@ -51,9 +52,9 @@ export default function Login({ onSkip, onDone, styles }) {
       const msg = String(e.message || e);
       // credenciales inválidas en login → sugerir registro (primera vez)
       if (!isSignup && /invalid login credentials|user not found/i.test(msg)) {
-        setError("No hay cuenta con ese email — crea una abajo.");
+        setError(t("No hay cuenta con ese email — crea una abajo."));
       } else {
-        setError(`No pude iniciar sesión: ${msg}`);
+        setError(`${t("No pude iniciar sesión")}: ${msg}`);
       }
       setBusy(false);
     }
@@ -65,8 +66,7 @@ export default function Login({ onSkip, onDone, styles }) {
         <Sprout size={30} color="#6FBF8B" strokeWidth={1.4} />
         <h1 style={styles.title}>Roots</h1>
         <p style={styles.sectionBody}>
-          Tu mapa de vocabulario, creciendo como raíces. Inicia sesión para guardarlo
-          en la nube y continuar en cualquier dispositivo — o continúa sin cuenta.
+          {t("Tu mapa de vocabulario, creciendo como raíces. Inicia sesión para guardarlo en la nube y continuar en cualquier dispositivo — o continúa sin cuenta.")}
         </p>
 
         {cloud ? (
@@ -75,15 +75,15 @@ export default function Login({ onSkip, onDone, styles }) {
               <>
                 <button style={styles.learnBtn} onClick={handleGoogle} disabled={busy}>
                   {busy ? <Loader2 size={16} className="spin" /> : <LogIn size={16} />}
-                  {busy ? "Conectando…" : "Continuar con Google"}
+                  {busy ? t("Conectando…") : t("Continuar con Google")}
                 </button>
                 <button style={styles.tab} onClick={() => setMode("email")}>
-                  <Mail size={13} style={{ verticalAlign: "-2px" }} /> Usar email y contraseña
+                  <Mail size={13} style={{ verticalAlign: "-2px" }} /> {t("Usar email y contraseña")}
                 </button>
               </>
             ) : (
               <>
-                <p style={styles.formHint}>{isSignup ? "Crea tu cuenta (email + contraseña):" : "Inicia sesión con tu email:"}</p>
+                <p style={styles.formHint}>{isSignup ? t("Crea tu cuenta (email + contraseña):") : t("Inicia sesión con tu email:")}</p>
                 <input
                   style={styles.input}
                   type="email"
@@ -98,20 +98,20 @@ export default function Login({ onSkip, onDone, styles }) {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="contraseña (mín. 6 caracteres)"
+                  placeholder={t("contraseña (mín. 6 caracteres)")}
                   autoComplete={isSignup ? "new-password" : "current-password"}
                   onKeyDown={(e) => { if (e.key === "Enter" && !busy) handleEmail(); }}
                   disabled={busy}
                 />
                 <button style={styles.learnBtn} onClick={handleEmail} disabled={busy || !email.trim() || !password}>
                   {busy ? <Loader2 size={16} className="spin" /> : isSignup ? <UserPlus size={16} /> : <LogIn size={16} />}
-                  {busy ? "Conectando…" : isSignup ? "Crear cuenta" : "Iniciar sesión"}
+                  {busy ? t("Conectando…") : isSignup ? t("Crear cuenta") : t("Iniciar sesión")}
                 </button>
                 <button style={styles.tab} onClick={() => { setIsSignup(!isSignup); setError(""); setNotice(""); }}>
-                  {isSignup ? "Ya tengo cuenta — iniciar sesión" : <><UserPlus size={13} style={{ verticalAlign: "-2px" }} /> No tengo cuenta — crear una</>}
+                  {isSignup ? t("Ya tengo cuenta — iniciar sesión") : <><UserPlus size={13} style={{ verticalAlign: "-2px" }} /> {t("No tengo cuenta — crear una")}</>}
                 </button>
                 <button style={styles.tab} onClick={() => { setMode("google"); setError(""); setNotice(""); }}>
-                  ← Volver a Google
+                  ← {t("Volver a Google")}
                 </button>
               </>
             )}
@@ -120,19 +120,19 @@ export default function Login({ onSkip, onDone, styles }) {
           <div style={styles.lockedBox}>
             <div style={styles.lockedInner}>
               <CloudOff size={16} />
-              <span>Login no disponible: {cloudDisabledReason()}</span>
+              <span>{t("Login no disponible")}: {cloudDisabledReason()}</span>
             </div>
           </div>
         )}
 
         <button style={styles.tab} onClick={onSkip}>
-          Continuar sin cuenta <ChevronRight size={13} style={{ verticalAlign: "-2px" }} />
+          {t("Continuar sin cuenta")} <ChevronRight size={13} style={{ verticalAlign: "-2px" }} />
         </button>
 
         {notice && <p style={{ ...styles.formHint, color: "#6FBF8B" }}>{notice}</p>}
         {error && <p style={styles.genError}>{error}</p>}
         <p style={styles.formHint}>
-          Sin cuenta, tu progreso se guarda solo en este navegador (localStorage).
+          {t("Sin cuenta, tu progreso se guarda solo en este navegador (localStorage).")}
         </p>
       </div>
     </div>

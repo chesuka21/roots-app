@@ -2060,6 +2060,7 @@ export default function VocabGraph() {
     return (
       <Login
         styles={styles}
+        t={t}
         onSkip={() => setLoginSkipped(true)}
         onDone={() => setLoginSkipped(true)}
       />
