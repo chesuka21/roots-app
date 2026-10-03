@@ -5,8 +5,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap } from "lucide-react";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
-import TOP_WORDS from "./data/top1000.js";
 import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
+import { frequentWordsFor } from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel, nodeMatchesTag } from "./data/patterns.js";
 import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUserCefr, patternsForCefr, isAdvancedCefr, patternsForWord, linkWordToPatterns, ensurePatternNodes, templateAllowedForCefr } from "./data/patterns-cefr.js";
 
@@ -377,9 +377,12 @@ async function suggestWordsForProfile(profile, existingWords, excludeWords = [])
     .join("; ");
 
   // ── Selección local: 70% afín a intereses + 30% amplio + fallback libre si pool < 5 ──
+  // MULTI-IDIOMA: el pool sale del diccionario del TARGET LANGUAGE del usuario
+  // (frecuentWordsFor('fr') → francés), no siempre el de inglés.
   const owned = new Set(existingWords.map((w) => String(w.en || w).toLowerCase()));
   const seen = new Set(excludeWords.map((w) => String(w).toLowerCase()));
-  const pool = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
+  const bank = frequentWordsFor(profile?.target_language || "en");
+  const pool = bank.filter((w) => !owned.has(w) && !seen.has(w));
 
   // El pool tiene 3,000+ palabras (Oxford/CEFR 3000); suficiente para años de práctica.
   // Si se acaba, no bloqueamos: la IA propone 5 libres.
@@ -418,7 +421,7 @@ Rules:
     return await callClaudeJson(prompt, 500);
   } catch (e) {
     console.error("[suggest] usando fallback local:", e.message);
-    const filtered = TOP_WORDS.filter((w) => !owned.has(w) && !seen.has(w));
+    const filtered = pool.length ? pool : frequentWordsFor(profile?.target_language || "en").filter((w) => !owned.has(w) && !seen.has(w));
     if (filtered.length < 5) {
       // pool agotado: fallback libre (clase 'filtered' vacío)
       return callClaudeJson(`An English learner needs 5 new words not in: ${[...seen].join(", ")}. JSON: {"suggestions":[{"word":"...","why":"..."}]} Rules: lowercase words, "why" under 10 words.`, 500);
@@ -1008,7 +1011,30 @@ const QUIZ_BANK = {
    - startRung: rung inicial según el self-report (beginner→A1, intermediate→B1, advanced→B2).
    - Cada respuesta mueve el rung: correcto → +1, error → −1 (nunca fuera de A1..C2).
    - QUIZ_LENGTH preguntas después, el rung final ES el CEFR del usuario.
-   - Escalable/adaptativo: dificultad creciente automática al subir de rung. */
+   - Escalable/adaptativo: dificultad creciente automática al subir de rung.
+   - i18n: la INSTRUCCIÓN de cada pregunta (q, "Choose the correct sentence")
+     se traduce con t(); el contenido en inglés NO se traduce (es el idioma
+     que el usuario está aprendiendo — el target language). */
+const QUIZ_I18N = {
+  "Choose the correct sentence.": { es: "Elige la oración correcta.", fr: "Choisis la phrase correcte.", de: "Wähle den richtigen Satz.", pt: "Escolha a frase correta." },
+  "Choose the sentence with correct usage.": { es: "Elige la oración con el uso correcto.", fr: "Choisis la phrase avec le bon usage.", de: "Wähle den Satz mit der richtigen Verwendung.", pt: "Escolha a frase com o uso correto." },
+  "What is the opposite of \"happy\"?": { es: "¿Cuál es el opuesto de \"happy\" (feliz)?", fr: "Quel est le contraire de « happy » (heureux) ?", de: "Was ist das Gegenteil von \"happy\" (glücklich)?", pt: "Qual é o oposto de \"happy\" (feliz)?" },
+  "Choose the formal equivalent of \"But it was expensive.\"": { es: "Elige el equivalente formal de \"But it was expensive.\" (Pero era caro.)", fr: "Choisis l'équivalent formel de « But it was expensive. » (Mais c'était cher.)", de: "Wähle die formale Entsprechung von \"But it was expensive.\" (Aber es war teuer.)", pt: "Escolha o equivalente formal de \"But it was expensive.\" (Mas era caro.)" },
+  "Choose the correct cleft sentence.": { es: "Elige la oración cleft correcta.", fr: "Choisis la phrase clivée correcte.", de: "Wähle den korrekten Cleft-Satz.", pt: "Escolha a frase clivada correta." },
+  "Nivelación adaptativa — pregunta": { es: "Nivelación adaptativa — pregunta", fr: "Test adaptatif — question", de: "Adaptiver Test — Frage", pt: "Teste adaptativo — pergunta" },
+  "nivel": { es: "nivel", fr: "niveau", de: "Niveau", pt: "nível" },
+  "Based on the quiz, you're at": { es: "Según el quiz, estás en", fr: "D'après le test, tu es au", de: "Laut dem Test bist du auf", pt: "Segundo o teste, você está no" },
+  "Spanish translations will show by default — you can turn them off anytime.": { es: "Las traducciones al español se muestran por defecto — puedes apagarlas cuando quieras.", fr: "Les traductions espagnoles s'affichent par défaut — tu peux les désactiver quand tu veux.", de: "Spanische Übersetzungen werden standardmäßig angezeigt — du kannst sie jederzeit ausschalten.", pt: "As traduções para o espanhol aparecem por padrão — você pode desligá-las quando quiser." },
+  "Translations will be hidden but one tap away when you need them.": { es: "Las traducciones estarán ocultas pero a un toque cuando las necesites.", fr: "Les traductions seront cachées mais à un geste quand tu en as besoin.", de: "Übersetzungen sind versteckt, aber auf einen Tippen entfernt, wenn du sie brauchst.", pt: "As traduções ficarão ocultas, mas a um toque quando precisar." },
+  "The app will stay 100% English — no translations shown.": { es: "La app estará 100% en inglés — sin traducciones.", fr: "L'app restera 100 % en anglais — sans traductions.", de: "Die App bleibt 100 % Englisch — keine Übersetzungen.", pt: "O app ficará 100% em inglês — sem traduções." },
+};
+// Instrucción traducida de una pregunta del quiz (fallback: inglés original)
+function quizQuestionText(q, lang) {
+  if (!q) return "";
+  const tr = QUIZ_I18N[q.q];
+  if (tr && tr[lang]) return tr[lang];
+  return q.q;
+}
 const QUIZ_LENGTH = 5;
 const SELF_TO_RUNG = { beginner: "A1", intermediate: "B1", advanced: "B2" };
 function nextRung(rung, correct) {
@@ -1021,9 +1047,10 @@ function pickQuizQuestion(rung, asked) {
   return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
 }
 
-function Onboarding({ onFinish, styles, t = (k) => k }) {
+function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es" }) {
   // ── Flujo progresivo de 4 pasos: perfil → idiomas → intereses → nivel ──
-  // Textos de la interfaz traducidos con `t` (native_language del usuario).
+  // Textos de la interfaz traducidos con `t` (native_language del usuario);
+  // el quiz usa quizQuestionText(q, uiLang) para sus instrucciones.
   const [step, setStep] = useState("profile"); // "profile" | "languages" | "interests" | "self" | "quiz" | "result"
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
@@ -1110,7 +1137,7 @@ function Onboarding({ onFinish, styles, t = (k) => k }) {
           <>
             <p style={styles.sectionBody}>{t("¡Hola! Cuéntanos un poco sobre ti (tu nombre es lo único obligatorio).")}</p>
             <label style={styles.label}>{t("Nombre o apodo *")}</label>
-            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Chesuka, Ana, Profe…" autoComplete="given-name" />
+            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Nombre o apodo *") === "Nombre o apodo *" ? "e.g. Alex, Sam" : t("Nombre o apodo *")} autoComplete="given-name" />
             <label style={styles.label}>{t("Edad")}</label>
             <input style={styles.input} type="number" min={5} max={99} value={age} onChange={(e) => setAge(e.target.value)} placeholder="e.g. 24" />
             <label style={styles.label}>{t("Género")}</label>
@@ -1131,20 +1158,20 @@ function Onboarding({ onFinish, styles, t = (k) => k }) {
             <p style={styles.sectionBody}>{t("¿Qué idioma hablas y cuál quieres aprender?")}</p>
             <label style={styles.label}>{t("Idioma nativo")}</label>
             <select style={styles.input} value={nativeLanguage} onChange={(e) => setNativeLanguage(e.target.value)}>
-              <option value="es">Español</option>
-              <option value="en">Inglés</option>
-              <option value="fr">Francés</option>
-              <option value="de">Alemán</option>
-              <option value="pt">Portugués</option>
+              <option value="es">{languageLabel("es")}</option>
+              <option value="en">{languageLabel("en")}</option>
+              <option value="fr">{languageLabel("fr")}</option>
+              <option value="de">{languageLabel("de")}</option>
+              <option value="pt">{languageLabel("pt")}</option>
             </select>
             <label style={styles.label}>{t("Idioma objetivo (a aprender)")}</label>
             <select style={styles.input} value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
-              <option value="en">Inglés (recomendado)</option>
-              <option value="fr">Francés</option>
-              <option value="de">Alemán</option>
-              <option value="pt">Portugués</option>
+              <option value="en">{languageLabel("en")} ({t("recomendado")})</option>
+              <option value="fr">{languageLabel("fr")}</option>
+              <option value="de">{languageLabel("de")}</option>
+              <option value="pt">{languageLabel("pt")}</option>
             </select>
-            <p style={styles.formHint}>Por ahora el contenido está optimizado para inglés — los demás idiomas llegarán pronto.</p>
+            <p style={styles.formHint}>{t("Por ahora el contenido está optimizado para inglés — los demás idiomas llegarán pronto.")}</p>
             <button style={styles.learnBtn} onClick={() => setStep("interests")}>
               Continuar <ChevronRight size={16} />
             </button>
@@ -1194,15 +1221,15 @@ function Onboarding({ onFinish, styles, t = (k) => k }) {
                 </span>
               </button>
             ))}
-            <p style={{ ...styles.formHint, marginTop: 8 }}>O responde el test adaptativo de 5 preguntas — o elige tu nivel manualmente después.</p>
+            <p style={{ ...styles.formHint, marginTop: 8 }}>{t("O responde el test adaptativo de 5 preguntas — o elige tu nivel manualmente después.")}</p>
             <button style={styles.tab} onClick={() => setStep("interests")}>{t("Atrás")}</button>
           </>
         )}
 
         {step === "quiz" && (
           <>
-            <p style={styles.formHint}>Nivelación adaptativa — pregunta {quizIdx + 1} de {QUIZ_LENGTH} · nivel {rung}</p>
-            <p style={styles.sectionBody}>{currentQ?.q}</p>
+            <p style={styles.formHint}>{t("Nivelación adaptativa — pregunta")} {quizIdx + 1} {t("of")} {QUIZ_LENGTH} · {t("nivel")} {rung}</p>
+            <p style={styles.sectionBody}>{quizQuestionText(currentQ, uiLang)}</p>
             {(currentQ?.options || []).map((opt, i) => (
               <button
                 key={i}
@@ -1218,15 +1245,14 @@ function Onboarding({ onFinish, styles, t = (k) => k }) {
         {step === "result" && (
           <>
             <p style={styles.sectionBody}>
-              Based on the quiz, you're at <b>{finalCefr || finalLevel}</b>
-              {selfReport ? ` (started from your guess of ${selfReport}).` : "."}
+              {t("Based on the quiz, you're at")} <b>{finalCefr || finalLevel}</b>
             </p>
             <p style={styles.formHint}>
               {["A1", "A2"].includes(finalCefr)
-                ? "Spanish translations will show by default — you can turn them off anytime."
+                ? t("Spanish translations will show by default — you can turn them off anytime.")
                 : ["B1", "B2"].includes(finalCefr)
-                ? "Translations will be hidden but one tap away when you need them."
-                : "The app will stay 100% English — no translations shown."}
+                ? t("Translations will be hidden but one tap away when you need them.")
+                : t("The app will stay 100% English — no translations shown.")}
             </p>
             <label style={styles.label}>{t("Not right? Pick your sub-level manually:")}</label>
             {CEFR_ORDER.map((c) => (
@@ -2030,6 +2056,7 @@ export default function VocabGraph() {
       <Onboarding
         styles={styles}
         t={t}
+        uiLang={uiLang}
         onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
           const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
@@ -2172,7 +2199,7 @@ export default function VocabGraph() {
                         {cloudSyncing ? <Loader2 size={11} className="spin" /> : cloudError ? "⚠" : "☁"} {String(cloudSession.user?.email || "Google").split("@")[0]}
                       </span>
                     ) : (
-                      <button style={styles.cloudBadge} onClick={() => setLoginSkipped(false)} title="Iniciar sesión para guardar en la nube">
+                      <button style={styles.cloudBadge} onClick={() => setLoginSkipped(false)} title={t("Iniciar sesión para guardar en la nube")}>
                         <LogIn size={11} /> Login
                       </button>
                     )}
@@ -2221,7 +2248,7 @@ export default function VocabGraph() {
                             return { ...prev, cefr, nodes, edges: newEdges };
                           });
                         }}
-                        title="Sub-nivel CEFR — define qué patrones se practican"
+                        title={t("Sub-nivel CEFR — define qué patrones se practican")}
                       >
                         {options.map((c) => (
                           <option key={c} value={c}>{c}</option>
@@ -2253,13 +2280,13 @@ export default function VocabGraph() {
         <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
           <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={styles.wordHeaderRow}>
-              <h2 style={styles.sectionTitle}>Ajustes</h2>
+              <h2 style={styles.sectionTitle}>{t("Ajustes")}</h2>
               <button style={styles.iconBtn} onClick={() => setShowSettings(false)} title="Cerrar">
                 <X size={16} />
               </button>
             </div>
-            <p style={styles.sectionBody}>Se aplican a toda la app al instante.</p>
-            <label style={styles.label}>Voz (Edge Neural, gratis)</label>
+            <p style={styles.sectionBody}>{t("Se aplican a toda la app al instante.")}</p>
+            <label style={styles.label}>{t("Voz (Edge Neural, gratis)")}</label>
             <select
               style={styles.input}
               value={settings.voice}
@@ -2269,7 +2296,7 @@ export default function VocabGraph() {
                 <option key={v.id} value={v.id}>{v.label}</option>
               ))}
             </select>
-            <label style={styles.label}>Velocidad: {settings.rate > 0 ? `+${settings.rate}` : settings.rate} (negativo = más lento, ideal para aprender)</label>
+            <label style={styles.label}>{t("Velocidad")}: {settings.rate > 0 ? `+${settings.rate}` : settings.rate} ({t("negativo = más lento, ideal para aprender")})</label>
             <input
               type="range"
               min={-10}
@@ -2283,15 +2310,15 @@ export default function VocabGraph() {
                           style={styles.genBtn}
                           onClick={() => speak("The river was calm in the early morning.", { voice: settings.voice, rate: settings.rate })}
                         >
-                          <Volume2 size={16} /> Probar voz
+                          <Volume2 size={16} /> {t("Probar voz")}
                         </button>
 
                         <div style={styles.lookupDivider} />
-                                                <h2 style={styles.sectionTitle}>Intereses</h2>
-                                                <p style={styles.sectionBody}>Los usa la IA para recomendarte vocabulario útil. Añade los que quieras, en cualquier momento.</p>
+                                                <h2 style={styles.sectionTitle}>{t("Intereses")}</h2>
+                                                <p style={styles.sectionBody}>{t("Los usa la IA para recomendarte vocabulario útil. Añade los que quieras, en cualquier momento.")}</p>
 
                         {/* i18n: idioma de la INTERFAZ (native_language) */}
-                        <label style={styles.label}>Idioma de la interfaz</label>
+                        <label style={styles.label}>{t("Idioma de la interfaz")}</label>
                         <select
                           style={styles.input}
                           value={uiLang}
@@ -2379,25 +2406,25 @@ export default function VocabGraph() {
 
                         {/* Supabase: cuenta / sync / cerrar sesión */}
                         <div style={styles.lookupDivider} />
-                        <h2 style={styles.sectionTitle}>Cuenta</h2>
+                        <h2 style={styles.sectionTitle}>{t("Cuenta")}</h2>
                         {cloudSession ? (
                           <>
                             <p style={styles.sectionBody}>
-                              Sesión: <b>{cloudSession.user?.email || "Google"}</b> ·{" "}
-                              {cloudSyncing ? "sincronizando…" : cloudError ? <span style={{ color: "#d98c8c" }}>error de sync: {cloudError}</span> : "tu mapa se guarda en la nube automáticamente."}
+                              {t("Sesión")}: <b>{cloudSession.user?.email || "Google"}</b> ·{" "}
+                              {cloudSyncing ? t("sincronizando…") : cloudError ? <span style={{ color: "#d98c8c" }}>{t("error de sync")}: {cloudError}</span> : t("tu mapa se guarda en la nube automáticamente.")}
                             </p>
                             <button
                               style={styles.cloudSignOut}
                               onClick={async () => { await signOut(); setCloudSession(null); }}
                             >
-                              <LogOut size={13} /> Cerrar sesión
+                              <LogOut size={13} /> {t("Cerrar sesión")}
                             </button>
                           </>
                         ) : isCloudEnabled() ? (
                           <>
-                            <p style={styles.sectionBody}>Sin sesión — tu progreso vive solo en este navegador. Inicia sesión para sincronizarlo.</p>
+                            <p style={styles.sectionBody}>{t("Sin sesión — tu progreso vive solo en este navegador. Inicia sesión para sincronizarlo.")}</p>
                             <button style={styles.cloudSignOut} onClick={() => setLoginSkipped(false)}>
-                              <LogIn size={13} /> Iniciar sesión con Google
+                              <LogIn size={13} /> {t("Iniciar sesión con Google")}
                             </button>
                           </>
                         ) : (
@@ -2467,7 +2494,7 @@ export default function VocabGraph() {
           ))}
         </div>
         {/* Slider de densidad: nº de líneas visibles + grosor por frecuencia de repaso */}
-        <div style={styles.densityBox} title="Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo">
+        <div style={styles.densityBox} title={t("Densidad del grafo: menos líneas = solo enlaces practicados; más = mapa completo")}>
           <span style={styles.densityLabel}>Densidad</span>
           <input
             type="range"
@@ -2864,18 +2891,17 @@ export default function VocabGraph() {
 
       {activeTab === "patterns" && (
                     <div style={styles.section}>
-                      <h2 style={styles.sectionTitle}><Waves size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /><span style={{ color: "#6FBF8B" }}>Patterns</span> — slot & filler</h2>
+                      <h2 style={styles.sectionTitle}><Waves size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /><span style={{ color: "#6FBF8B" }}>{t("Patterns")}</span> — {t("slot & filler")}</h2>
                       <p style={styles.sectionBody}>
-                        Plantillas con huecos (slots). El sistema genera combinaciones cambiando una parte a la vez —
-                        tú pruebas, fallas, y la IA te corrige. Empieza por tu nivel y desbloquea el siguiente.
+                        {t("Plantillas con huecos (slots). El sistema genera combinaciones cambiando una parte a la vez — tú pruebas, fallas, y la IA te corrige. Empieza por tu nivel y desbloquea el siguiente.")}
                       </p>
 
                       {/* Crear tu propia plantilla */}
                       <div style={styles.customPatternBox}>
-                        <h3 style={styles.customTitle}>✏️ Crear tu propia plantilla</h3>
-                        <p style={styles.formHint}>Escribe la estructura con <b>____</b> para cada hueco (p. ej. "I drink ____ in the morning"). Guarda la traducción si quieres.</p>
+                        <h3 style={styles.customTitle}>✏️ {t("Crear tu propia plantilla")}</h3>
+                        <p style={styles.formHint}>{t("Escribe la estructura con ____ para cada hueco. Guarda la traducción si quieres.")}</p>
                         <input style={styles.input} value={newPaText} onChange={(e) => setNewPaText(e.target.value)} placeholder='e.g. I drink ____ in the morning' />
-                        <input style={styles.input} value={newPaEs} onChange={(e) => setNewPaEs(e.target.value)} placeholder="traducción (opcional): e.g. Yo tomo ____ en la mañana" />
+                        <input style={styles.input} value={newPaEs} onChange={(e) => setNewPaEs(e.target.value)} placeholder={t("traducción (opcional): e.g. Yo tomo ____ en la mañana")} />
                         <div style={styles.connRow}>
                           <input style={styles.inputSmall} value={newPaWord} onChange={(e) => setNewPaWord(e.target.value)} placeholder="palabra para el hueco, ej. coffee" />
                           <button style={styles.smallAddBtn} onClick={() => { if (newPaWord.trim()) { setNewPaPool((w) => [...w, newPaWord.trim().toLowerCase()]); setNewPaWord(""); } }}><Plus size={14} /></button>
@@ -2902,7 +2928,7 @@ export default function VocabGraph() {
                             setNewPaText(""); setNewPaEs(""); setNewPaWord(""); setNewPaPool([]);
                           }}
                         >
-                          <Plus size={15} /> Añadir a mis plantillas
+                          <Plus size={15} /> {t("Añadir a mis plantillas")}
                         </button>
                       </div>
 
@@ -3139,7 +3165,11 @@ export default function VocabGraph() {
                   setSuggestBatch([]);
                   try {
                     const existingWords = Object.values(data.nodes).map((n) => ({ en: n.en }));
-                    const result = await suggestWordsForProfile(data.profile, existingWords, data.suggestSeen || []);
+                    const result = await suggestWordsForProfile(
+                      // PRIVACIDAD: solo job/interests/target_language — JAMÁS name
+                      { job: data.profile?.job, interests: data.profile?.interests, target_language: data.targetLanguage || "en" },
+                      existingWords, data.suggestSeen || []
+                    );
                     // persistir lo mostrado para que futuros refresh den palabras nuevas
                     const newSeen = [...(data.suggestSeen || []), ...(result.suggestions || []).map((s) => s.word).filter(Boolean)];
                     setData((prev) => ({ ...prev, suggestSeen: [...new Set(newSeen)] }));
@@ -3248,7 +3278,11 @@ export default function VocabGraph() {
                         setSuggestChecked(new Set());
                         setSuggestBatch([]);
                         setSuggestBusy(true);
-                        suggestWordsForProfile(data.profile, Object.values(data.nodes).map((n) => ({ en: n.en })), data.suggestSeen || []).then((result) => {
+                        suggestWordsForProfile(
+                          // PRIVACIDAD: solo job/interests/target_language — JAMÁS name
+                          { job: data.profile?.job, interests: data.profile?.interests, target_language: data.targetLanguage || "en" },
+                          Object.values(data.nodes).map((n) => ({ en: n.en })), data.suggestSeen || []
+                        ).then((result) => {
                           const newSeen = [...(data.suggestSeen || []), ...(result.suggestions || []).map((s) => s.word).filter(Boolean)];
                           setData((prev) => ({ ...prev, suggestSeen: [...new Set(newSeen)] }));
                           setSuggestResults(result.suggestions || []);

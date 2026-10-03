@@ -443,6 +443,90 @@ const TOP1000 = [
 
 ];
 
-// dedupe + minúsculas por seguridad
-export const TOP_WORDS = [...new Set(TOP1000.map((w) => w.toLowerCase()))];
+/* ---------- Frequency bank MULTI-IDIOMA (Oxford/CEFR estilo) ----------
+   Estructura: FREQUENT_BANK[lang] = lista de las palabras más habladas de
+   CADA idioma. `target_language` del usuario decide qué diccionario se usa:
+   sugerencias y búsqueda rápida consultan WORDBANK_FREQUENT[targetLanguage],
+   no siempre el de inglés. 'en' = 3,192 palabras (base completa); los demás
+   idiomas empiezan con su top-250 (se amplían igual que 'en'). */
+const FREQUENT_BANK = {
+  en: TOP1000,
+
+  // ── Francés (top habladas; se amplía con el mismo patrón) ──
+  fr: [
+    "être","avoir","faire","dire","aller","voir","savoir","vouloir","venir","pouvoir",
+    "devoir","prendre","trouver","donner","falloir","parler","mettre","passer","regarder","aimer",
+    "croire","demander","rester"," répondre","entendre","penser","utiliser","temps","année","jour",
+    "chose","homme","femme","vie","enfant","monde","école","famille","maison","eau",
+    "temps","travail","nuit","livre","main","partie","place","cas","semaine","groupe",
+    "pays","problème","société","étudiant","mère","argent","histoire","mois","droit","tête",
+    "soleil","cœur","oreille","vie","ami","père","force","heure","jeu","ligne",
+    "fin","membre","loi","voiture","ville","communauté","nom","équipe","minute","idée",
+    "corps","information","dos","parent","visage","autre","niveau","bureau","porte","santé",
+    "personne","art","guerre","histoire","fête","résultat","changement","matin","raison","recherche",
+    "fille","garçon","moment","air","professeur","éducation","pain","riz","poisson","viande",
+    "lait","café","thé","jus","fruit","pomme","œuf","sel","sucre","petit-déjeuner",
+    "déjeuner","dîner","cuisine","recette","goût","faim","heureux","triste","excité","fâché",
+    "fatigué","calme","inquiet","effrayé","fier","amour","comme","aimer","eau","boire",
+    "manger","cuisiner","chien","chat","oiseau","arbre","forêt","rivière","racine","chambre",
+  ],
+
+  // ── Alemán (top habladas) ──
+  de: [
+    "sein","haben","werden","können","müssen","sollen","wollen","mögen","wissen","sagen",
+    "gehen","sehen","kommen","lassen","machen","nehmen","geben","finden","bleiben","liegen",
+    "denken","sprechen","zeigen","führen","bringen","leben","arbeiten","spielen","lernen","fragen",
+    "Zeit","Jahr","Leute","Tag","Mann","Sache","Frau","Leben","Kind","Welt",
+    "Schule","Staat","Familie","Student","Gruppe","Land","Problem","Hand","Teil","Ort",
+    "Fall","Woche","Firma","System","Programm","Frage","Werk","Nacht","Punkt","Zuhause",
+    "Wasser","Zimmer","Mutter","Bereich","Geld","Geschichte","Fakt","Monat","Recht","Studie",
+    "Buch","Auge","Job","Wort","Geschäft","Frage","Seite","Art","Kopf","Haus",
+    "Dienst","Freund","Vater","Macht","Stunde","Spiel","Linie","Ende","Mitglied","Gesetz",
+    "Auto","Stadt","Gemeinschaft","Name","Team","Minute","Idee","Kind","Körper","Information",
+    "Rücken","Elternteil","Gesicht","andere","Ebene","Büro","Tür","Gesundheit","Person","Kunst",
+    "Krieg","Geschichte","Party","Ergebnis","Wechsel","Morgen","Grund","Forschung","Mädchen","Moment",
+    "Luft","Lehrer","Bildung","Brot","Reis","Fisch","Fleisch","Milch","Kaffee","Tee",
+    "Saft","Obst","Apfel","Ei","Salz","Zucker","Frühstück","Mittagessen","Abendessen","Küche",
+    "Rezept","Geschmack","Hunger","glücklich","traurig","aufgeregt","verärgert","müde","ruhig","besorgt",
+    "verängstigt","stolz","Liebe","mögen","trinken","essen","kochen","Hund","Katze","Vogel",
+    "Baum","Wald","Fluss","Wurzel","Zimmer",
+  ],
+
+  // ── Portugués (top habladas) ──
+  pt: [
+    "ser","ter","estar","fazer","poder","dizer","ir","ver","saber","querer",
+    "chegar","ficar","passar","dever","tomar","encontrar","dar","falar","parecer","deixar",
+    "começar","encontrar","precisar","sentir","achar","olhar","usar","trabalhar","chamar","viver",
+    "tempo","ano","pessoas","dia","homem","coisa","mulher","vida","criança","mundo",
+    "escola","estado","família","estudante","grupo","país","problema","mão","parte","lugar",
+    "caso","semana","empresa","sistema","programa","pergunta","trabalho","noite","ponto","casa",
+    "água","quarto","mãe","área","dinheiro","história","fato","mês","direito","estudo",
+    "livro","olho","emprego","palavra","negócio","questão","lado","tipo","cabeça","serviço",
+    "amigo","pai","poder","hora","jogo","linha","fim","membro","lei","carro",
+    "cidade","comunidade","nome","equipe","minuto","ideia","corpo","informação","costas","pais",
+    "face","outros","nível","escritório","porta","saúde","pessoa","arte","guerra","história",
+    "festa","resultado","mudança","manhã","razão","pesquisa","garota","cara","momento","ar",
+    "professor","força","educação","pão","arroz","peixe","carne","leite","café","chá",
+    "suco","fruta","maçã","ovo","sal","açúcar","café da manhã","almoço","jantar","cozinha",
+    "receita","sabor","fome","feliz","triste","animado","bravo","cansado","calmo","preocupado",
+    "com medo","orgulhoso","amor","como","beber","comer","cozinhar","cachorro","gato","pássaro",
+    "árvore","floresta","rio","raiz","quarto",
+  ],
+};
+
+// dedupe + minúsculas por seguridad (por idioma)
+const dedupe = (list) => [...new Set(list.map((w) => String(w || "").trim().toLowerCase().trim()))];
+
+// Banco indexado por idioma: WORDBANK_FREQUENT[targetLanguage] — la API pública
+// de este módulo. 'en' conserva compatibilidad con TOP_WORDS (usos existentes).
+export const WORDBANK_FREQUENT = Object.fromEntries(
+  Object.entries(FREQUENT_BANK).map(([lang, list]) => [lang, dedupe(list)])
+);
+
+// Banco de candidatos para el idioma dado (fallback: inglés)
+export function frequentWordsFor(lang) {
+  return WORDBANK_FREQUENT[lang] || WORDBANK_FREQUENT.en;
+}
+
+export const TOP_WORDS = WORDBANK_FREQUENT.en;
 export default TOP1000;
