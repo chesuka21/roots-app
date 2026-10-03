@@ -1047,10 +1047,12 @@ function pickQuizQuestion(rung, asked) {
   return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
 }
 
-function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es" }) {
+function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLangChange }) {
   // ── Flujo progresivo de 4 pasos: perfil → idiomas → intereses → nivel ──
   // Textos de la interfaz traducidos con `t` (native_language del usuario);
   // el quiz usa quizQuestionText(q, uiLang) para sus instrucciones.
+  // onNativeLangChange: propaga el idioma elegido AL ESTADO DE APP AL INSTANTE
+  // (así `t` reacciona y TODOS los pasos siguientes se traducen).
   const [step, setStep] = useState("profile"); // "profile" | "languages" | "interests" | "self" | "quiz" | "result"
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
@@ -1157,7 +1159,7 @@ function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es" }) {
           <>
             <p style={styles.sectionBody}>{t("¿Qué idioma hablas y cuál quieres aprender?")}</p>
             <label style={styles.label}>{t("Idioma nativo")}</label>
-            <select style={styles.input} value={nativeLanguage} onChange={(e) => setNativeLanguage(e.target.value)}>
+            <select style={styles.input} value={nativeLanguage} onChange={(e) => { setNativeLanguage(e.target.value); onNativeLangChange?.(e.target.value); }}>
               <option value="es">{languageLabel("es")}</option>
               <option value="en">{languageLabel("en")}</option>
               <option value="fr">{languageLabel("fr")}</option>
@@ -2057,6 +2059,7 @@ export default function VocabGraph() {
         styles={styles}
         t={t}
         uiLang={uiLang}
+        onNativeLangChange={(lang) => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: lang } }))}
         onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // CEFR real del quiz adaptativo (escalera A1..C2); fallback al mapeo del tier.
           const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
