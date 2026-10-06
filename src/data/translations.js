@@ -147,6 +147,12 @@ export const TRANSLATIONS = {
     "Crea tu cuenta (email + contraseña):": "Create your account (email + password):",
     "Inicia sesión con tu email:": "Sign in with your email:",
     "contraseña (mín. 6 caracteres)": "password (min. 6 characters)",
+        "Sentence Lab": "Sentence Lab",
+        "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.": "Write any free sentence in English — I'll correct it, make it more natural and explain the fix in your language.",
+        "Escribe tu oración libre…": "Write your sentence…",
+        "Suena natural.": "Sounds natural.",
+        "Más natural:": "More natural:",
+        "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Sentences you practice here also join your map if you tap the word you add.",
   },
   es: {
     // — navegación —
@@ -291,6 +297,12 @@ export const TRANSLATIONS = {
     "Crea tu cuenta (email + contraseña):": "Crea tu cuenta (email + contraseña):",
     "Inicia sesión con tu email:": "Inicia sesión con tu email:",
     "contraseña (mín. 6 caracteres)": "contraseña (mín. 6 caracteres)",
+    "Sentence Lab": "Laboratorio de oraciones",
+    "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.": "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.",
+    "Escribe tu oración libre…": "Escribe tu oración libre…",
+    "Suena natural.": "Suena natural.",
+    "Más natural:": "Más natural:",
+    "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.",
   },
   fr: {
     // — navigation —
@@ -435,6 +447,12 @@ export const TRANSLATIONS = {
     "Crea tu cuenta (email + contraseña):": "Crée ton compte (email + mot de passe) :",
     "Inicia sesión con tu email:": "Connecte-toi avec ton email :",
     "contraseña (mín. 6 caracteres)": "mot de passe (min. 6 caractères)",
+    "Sentence Lab": "Labo de phrases",
+    "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.": "Écris n'importe quelle phrase libre en anglais — je la corrige, la rends plus naturelle et t'explique l'ajustement dans ta langue.",
+    "Escribe tu oración libre…": "Écris ta phrase libre…",
+    "Suena natural.": "Ça sonne naturel.",
+    "Más natural:": "Plus naturel :",
+    "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Les phrases que tu pratiques ici rejoignent aussi ta carte si tu touches le mot que tu ajoutes.",
   },
   de: {
     // — Navigation —
@@ -579,6 +597,12 @@ export const TRANSLATIONS = {
     "Crea tu cuenta (email + contraseña):": "Erstelle dein Konto (E-Mail + Passwort):",
     "Inicia sesión con tu email:": "Melde dich mit deiner E-Mail an:",
     "contraseña (mín. 6 caracteres)": "Passwort (min. 6 Zeichen)",
+    "Sentence Lab": "Satz-Labor",
+    "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.": "Schreibe einen beliebigen Satz auf Englisch — ich korrigiere ihn, mache ihn natürlicher und erkläre die Korrektur in deiner Sprache.",
+    "Escribe tu oración libre…": "Schreibe deinen Satz frei…",
+    "Suena natural.": "Klingt natürlich.",
+    "Más natural:": "Naturlicher:",
+    "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Sätze, die du hier übst, landen auch auf deiner Karte, wenn du das hinzugefügte Wort antippst.",
   },
   pt: {
     // — navegação —
@@ -723,6 +747,12 @@ export const TRANSLATIONS = {
     "Crea tu cuenta (email + contraseña):": "Crie sua conta (e-mail + senha):",
     "Inicia sesión con tu email:": "Entre com seu e-mail:",
     "contraseña (mín. 6 caracteres)": "senha (mín. 6 caracteres)",
+    "Sentence Lab": "Laboratório de frases",
+    "Escribe cualquier oración libre en inglés — te la corrijo, la hago más natural y te explico el ajuste en tu idioma.": "Escreva qualquer frase livre em inglês — eu corrijo, torno mais natural e explico o ajuste no seu idioma.",
+    "Escribe tu oración libre…": "Escreva sua frase livre…",
+    "Suena natural.": "Soa natural.",
+    "Más natural:": "Mais natural:",
+    "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "As frases que você pratica aqui também entram no mapa se você tocar na palavra adicionada.",
   },
 };
 

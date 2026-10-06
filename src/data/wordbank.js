@@ -55,6 +55,104 @@ export function lookupLocalWord(word) {
   return hit && hit.en ? hit : null;
 }
 
+/* ---------- Conjugación verbal (tiempos del verbo) ----------
+   Al guardar/inspeccionar un verbo se almacenan sus formas: past,
+   past_participle, gerund, present_3rd. Los IRREGULARES van en tabla
+   exacta; el resto sigue reglas de -ed/-ing/-s. Sin IA para el local. */
+const IRREGULAR_VERBS = {
+  be: { past: "was/were", past_participle: "been", gerund: "being", present_3rd: "is" },
+  do: { past: "did", past_participle: "done", gerund: "doing", present_3rd: "does" },
+  go: { past: "went", past_participle: "gone", gerund: "going", present_3rd: "goes" },
+  have: { past: "had", past_participle: "had", gerund: "having", present_3rd: "has" },
+  say: { past: "said", past_participle: "said", gerund: "saying", present_3rd: "says" },
+  get: { past: "got", past_participle: "gotten", gerund: "getting", present_3rd: "gets" },
+  make: { past: "made", past_participle: "made", gerund: "making", present_3rd: "makes" },
+  know: { past: "knew", past_participle: "known", gerund: "knowing", present_3rd: "knows" },
+  take: { past: "took", past_participle: "taken", gerund: "taking", present_3rd: "takes" },
+  see: { past: "saw", past_participle: "seen", gerund: "seeing", present_3rd: "sees" },
+  come: { past: "came", past_participle: "come", gerund: "coming", present_3rd: "comes" },
+  think: { past: "thought", past_participle: "thought", gerund: "thinking", present_3rd: "thinks" },
+  look: { past: "looked", past_participle: "looked", gerund: "looking", present_3rd: "looks" },
+  want: { past: "wanted", past_participle: "wanted", gerund: "wanting", present_3rd: "wants" },
+  give: { past: "gave", past_participle: "given", gerund: "giving", present_3rd: "gives" },
+  find: { past: "found", past_participle: "found", gerund: "finding", present_3rd: "finds" },
+  tell: { past: "told", past_participle: "told", gerund: "telling", present_3rd: "tells" },
+  become: { past: "became", past_participle: "become", gerund: "becoming", present_3rd: "becomes" },
+  leave: { past: "left", past_participle: "left", gerund: "leaving", present_3rd: "leaves" },
+  put: { past: "put", past_participle: "put", gerund: "putting", present_3rd: "puts" },
+  bring: { past: "brought", past_participle: "brought", gerund: "bringing", present_3rd: "brings" },
+  begin: { past: "began", past_participle: "begun", gerund: "beginning", present_3rd: "begins" },
+  write: { past: "wrote", past_participle: "written", gerund: "writing", present_3rd: "writes" },
+  sit: { past: "sat", past_participle: "sat", gerund: "sitting", present_3rd: "sits" },
+  stand: { past: "stood", past_participle: "stood", gerund: "standing", present_3rd: "stands" },
+  lose: { past: "lost", past_participle: "lost", gerund: "losing", present_3rd: "loses" },
+  buy: { past: "bought", past_participle: "bought", gerund: "buying", present_3rd: "buys" },
+  sell: { past: "sold", past_participle: "sold", gerund: "selling", present_3rd: "sells" },
+  eat: { past: "ate", past_participle: "eaten", gerund: "eating", present_3rd: "eats" },
+  drink: { past: "drank", past_participle: "drunk", gerund: "drinking", present_3rd: "drinks" },
+  sleep: { past: "slept", past_participle: "slept", gerund: "sleeping", present_3rd: "sleeps" },
+  drive: { past: "drove", past_participle: "driven", gerund: "driving", present_3rd: "drives" },
+  read: { past: "read", past_participle: "read", gerund: "reading", present_3rd: "reads" },
+  speak: { past: "spoke", past_participle: "spoken", gerund: "speaking", present_3rd: "speaks" },
+  fly: { past: "flew", past_participle: "flown", gerund: "flying", present_3rd: "flies" },
+  grow: { past: "grew", past_participle: "grown", gerund: "growing", present_3rd: "grows" },
+  draw: { past: "drew", past_participle: "drawn", gerund: "drawing", present_3rd: "draws" },
+  run: { past: "ran", past_participle: "run", gerund: "running", present_3rd: "runs" },
+  sing: { past: "sang", past_participle: "sung", gerund: "singing", present_3rd: "sings" },
+  swim: { past: "swam", past_participle: "swum", gerund: "swimming", present_3rd: "swims" },
+  teach: { past: "taught", past_participle: "taught", gerund: "teaching", present_3rd: "teaches" },
+  catch: { past: "caught", past_participle: "caught", gerund: "catching", present_3rd: "catches" },
+  fall: { past: "fell", past_participle: "fallen", gerund: "falling", present_3rd: "falls" },
+  wear: { past: "wore", past_participle: "worn", gerund: "wearing", present_3rd: "wears" },
+  choose: { past: "chose", past_participle: "chosen", gerund: "choosing", present_3rd: "chooses" },
+  forget: { past: "forgot", past_participle: "forgotten", gerund: "forgetting", present_3rd: "forgets" },
+  forgive: { past: "forgave", past_participle: "forgiven", gerund: "forgiving", present_3rd: "forgives" },
+  cut: { past: "cut", past_participle: "cut", gerund: "cutting", present_3rd: "cuts" },
+  shut: { past: "shut", past_participle: "shut", gerund: "shutting", present_3rd: "shuts" },
+  hit: { past: "hit", past_participle: "hit", gerund: "hitting", present_3rd: "hits" },
+  spin: { past: "spun", past_participle: "spun", gerund: "spinning", present_3rd: "spins" },
+  win: { past: "won", past_participle: "won", gerund: "winning", present_3rd: "wins" },
+  throw: { past: "threw", past_participle: "thrown", gerund: "throwing", present_3rd: "throws" },
+  feel: { past: "felt", past_participle: "felt", gerund: "feeling", present_3rd: "feels" },
+  keep: { past: "kept", past_participle: "kept", gerund: "keeping", present_3rd: "keeps" },
+  meet: { past: "met", past_participle: "met", gerund: "meeting", present_3rd: "meets" },
+  pay: { past: "paid", past_participle: "paid", gerund: "paying", present_3rd: "pays" },
+  send: { past: "sent", past_participle: "sent", gerund: "sending", present_3rd: "sends" },
+  spend: { past: "spent", past_participle: "spent", gerund: "spending", present_3rd: "spends" },
+  build: { past: "built", past_participle: "built", gerund: "building", present_3rd: "builds" },
+  learn: { past: "learned/learnt", past_participle: "learned/learnt", gerund: "learning", present_3rd: "learns" },
+  mean: { past: "meant", past_participle: "meant", gerund: "meaning", present_3rd: "means" },
+  hear: { past: "heard", past_participle: "heard", gerund: "hearing", present_3rd: "hears" },
+  leave_early: null, // placeholder para evitar claves duplicadas
+  try: { past: "tried", past_participle: "tried", gerund: "trying", present_3rd: "tries" },
+  carry: { past: "carried", past_participle: "carried", gerund: "carrying", present_3rd: "carries" },
+  marry: { past: "married", past_participle: "married", gerund: "marrying", present_3rd: "marries" },
+  play: { past: "played", past_participle: "played", gerund: "playing", present_3rd: "plays" },
+  show: { past: "showed", past_participle: "shown", gerund: "showing", present_3rd: "shows" },
+};
+
+// Formas del verbo: irregular de la tabla si existe; si no, reglas regulares.
+// Devuelve { present, past, past_participle, gerund, present_3rd }.
+export function verbForms(verb) {
+  const v = String(verb || "").trim().toLowerCase().replace(/^to /, "");
+  if (!v) return null;
+  if (IRREGULAR_VERBS[v]) return { present: v, ...IRREGULAR_VERBS[v] };
+  // regulares: -e → -d/-ing (make → made/making); consonant+y → -ied (try → tried);
+  // CVC cortos duplican (stop→stopped, plan→planned) si NO están en la tabla
+  const isVowel = (c) => "aeiou".includes(c);
+  let past;
+  if (/(s|x|z|ch|sh)$/.test(v)) past = v + "ed";
+  else if (/[^aeiou]y$/.test(v)) past = v.slice(0, -1) + "ied";
+  else if (/(?:[aeiou][bdcfghjklmnpqrstvwxz])$/.test(v) && v.length <= 4 && !IRREGULAR_VERBS[v]) past = v + v.slice(-1) + "ed";
+  else past = v.replace(/e$/, "") + "ed";
+  const gerund = /ee$/.test(v) ? v + "ing" : v.replace(/e$/, "") + "ing";
+  let present_3rd;
+  if (/(s|x|z|ch|sh|o)$/.test(v)) present_3rd = v + "es";
+  else if (/[^aeiou]y$/.test(v)) present_3rd = v.slice(0, -1) + "ies";
+  else present_3rd = v + "s";
+  return { present: v, past, past_participle: past, gerund, present_3rd };
+}
+
 /* Pronombres/sujetos comunes para los patterns (no son "palabras a aprender"
    pero sí agentes válidos). El generador los usa para el slot "agent". */
 export const COMMON_AGENTS = ["I", "you", "he", "she", "we", "they", "my mom", "my dad", "the baby", "the dog"];

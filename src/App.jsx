@@ -4,8 +4,8 @@ import LanguageGate from "./components/LanguageGate.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap } from "lucide-react";
-import { lookupLocalWord, wordsByCategory, WORDBANK_EN } from "./data/wordbank.js";
+import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
+import { lookupLocalWord, wordsByCategory, WORDBANK_EN, verbForms } from "./data/wordbank.js";
 import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
 import { frequentWordsFor } from "./data/top1000.js";
 import { fillFrame, buildDrills, parseUserFrame, frameToText, autoLevel as patternAutoLevel, PATTERN_LEVELS, SLOT_POOLS, SEED_PATTERNS, scaffoldsForLevel, nodeMatchesTag } from "./data/patterns.js";
@@ -14,142 +14,10 @@ import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUs
 /* ---------- AI + image helpers — call our own /api/* serverless
    functions (see /api/claude.js and /api/pexels.js) so the Groq/Gemini and
    Unsplash API keys stay on the server and never reach the browser. ---------- */
-/* Cache de respuestas IA en memoria + localStorage: si ya pediste "deadline",
-   no se gasta otro request ni otros tokens. Clave para velocidad y costo. */
-const AI_CACHE_KEY = "roots-ai-cache-v2"; // v2: la v1 se envenenó con respuestas truncadas — se invalida entera
-const aiMemCache = new Map();
-// La clave es un hash del prompt COMPLETO: en v1 se usaban solo los primeros
-// 200 caracteres y prompts distintos (ej. corregir dos oraciones diferentes)
-// colisionaban y devolvían la respuesta de OTRA petición → "is not valid JSON".
-function hashStr(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
-}
-function aiCacheKey(prompt) { return `${hashStr(prompt)}:${prompt.length}`; }
-function aiCacheGet(prompt) {
-  const key = aiCacheKey(prompt);
-  if (aiMemCache.has(key)) return aiMemCache.get(key);
-  try {
-    const raw = localStorage.getItem(AI_CACHE_KEY);
-    if (raw) {
-      const obj = JSON.parse(raw);
-      if (obj && obj[key]) {
-        aiMemCache.set(key, obj[key]);
-        return obj[key];
-      }
-    }
-  } catch (e) { /* sin cache — seguir a red */ }
-  return null;
-}
-function aiCacheSet(prompt, value) {
-  const key = aiCacheKey(prompt);
-  aiMemCache.set(key, value);
-  try {
-    const raw = localStorage.getItem(AI_CACHE_KEY);
-    const obj = raw ? JSON.parse(raw) : {};
-    obj[key] = value;
-    // cap simple: max ~200 entradas para no llenar localStorage
-    const keys = Object.keys(obj);
-    if (keys.length > 200) delete obj[keys[0]];
-    localStorage.setItem(AI_CACHE_KEY, JSON.stringify(obj));
-  } catch (e) { /* storage lleno — ignorar */ }
-}
-async function callClaude(prompt, max_tokens, attempt = 1, skipCache = false, force = null) {
-  // v3: backend responde en <8s (límite Vercel Hobby 10s).
-  // Un solo reintento rápido en error de red; sin esperas de 45s ni 3 reintentos.
-  // `force` ("groq"|"gemini") obliga a un proveedor (para reintentos con otro modelo).
-  const ck = force ? `${prompt}|force:${force}` : prompt;
-  const hit = skipCache ? null : aiCacheGet(ck);
-  if (hit) return hit;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000); // el cold start de Vercel + modelo pesado puede tardar 10-20s la primera vez
-  let response;
-  try {
-    response = await fetch("/api/claude", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, max_tokens: Math.min(max_tokens || 400, 1200), ...(force ? { force } : {}) }),
-      signal: controller.signal,
-    });
-  } catch (e) {
-    if (e.name === "AbortError") throw new Error("La IA tardó demasiado (>25s) — intenta de nuevo.");
-    // reintento rápido si la red o el cold start de Vercel corta la conexión
-    if (attempt < 3) {
-      await new Promise((r) => setTimeout(r, 800));
-      return callClaude(prompt, max_tokens, attempt + 1, skipCache, force);
-    }
-    throw e;
-  } finally {
-    clearTimeout(timeout);
-  }
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const msg = data?.error?.message || data?.error || `AI request failed (${response.status})`;
-    throw new Error(msg);
-  }
-  if (!data) {
-    // El backend respondió algo que no es JSON (p. ej. HTML de un deploy caído)
-    throw new Error("El servidor no respondió JSON — revisa tu conexión o el deploy.");
-  }
-  const text = (data.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-  const clean = text.replace(/```json|```/g, "").trim();
-  if (!skipCache) aiCacheSet(ck, clean);
-  return clean;
-}
-
-/* JSON tolerante + reparación + reintento multi-proveedor.
-   Causa real de los fallos: el modelo 8B a veces mete comillas dobles sin
-   escapar dentro de los valores (ej. en "sentence") o deja comas colgantes,
-   y eso rompe JSON.parse aunque el texto "parezca" JSON. */
-function repairJson(t) {
-  let s = String(t || "").replace(/```json|```/g, "").trim();
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  s = s.replace(/,\s*([}\]])/g, "$1"); // comas colgantes: {"a":1,} → {"a":1}
-  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ""); // controles literales
-  s = s.replace(/\n/g, " "); // saltos de línea literales dentro de strings
-  return s;
-}
-function extractJson(text) {
-  const t = String(text || "").trim();
-  try { return JSON.parse(t); } catch (e) { /* intentar reparación abajo */ }
-  try { return JSON.parse(repairJson(t)); } catch (e) { /* reintentar fuera */ }
-  // último intento: arreglo brackets/braces desbalanceados (la IA a veces no los cierra)
-  let s = repairJson(t);
-  // arreglo de strings: si está truncado a mitad, cerramos la cadena actual
-  const braceCount = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
-  if (braceCount > 0) s += "}".repeat(braceCount);
-  const bracketCount = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
-  if (bracketCount > 0) s += "]".repeat(bracketCount);
-  try { return JSON.parse(s); } catch (e) { /* nada más que hacer */ }
-  throw new Error("La IA devolvió un formato inválido — intenta de nuevo.");
-}
-// Regla extra que se añade solo en los reintentos (no gasta tokens en el intento normal)
-const STRICT_JSON = `\n\nSTRICT OUTPUT RULES: respond with ONLY valid JSON (no markdown, no commentary). Never put double-quote characters (") inside any string value — use single quotes (') if you must quote a word. Close every bracket and brace.`;
-async function callClaudeJson(prompt, max_tokens) {
-  try {
-    return extractJson(await callClaude(prompt, max_tokens));
-  } catch (e1) {
-    // 2º intento: mismo proveedor, en fresco (sin cache) + regla estricta
-    try {
-      return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true));
-    } catch (e2) {
-      // 3er intento: OTRO proveedor (Gemini piensa distinto y suele formatear mejor)
-      // ...pero si Gemini está en quota (es free con 5 req/día), probamos Groq/OpenRouter
-      try {
-        return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "gemini"));
-      } catch (e3) {
-        if (/quota|429|resource/i.test(e3.message)) return extractJson(await callClaude(prompt + STRICT_JSON, max_tokens, 1, true, "openrouter"));
-        throw e3;
-      }
-    }
-  }
-}
+/* Servicio centralizado de IA: capa separada en src/lib/ai.js (cache, reparación
+   JSON, multi-proveedor). Los componentes importan desde ahí — sin duplicación inline. */
+import { callClaudeJson } from "./lib/ai.js";
+import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
   "a", "an", "the", "to", "of", "when", "who", "that", "which", "with", "for", "and", "or",
@@ -439,7 +307,7 @@ async function generateWordDetails(word, existingWords) {
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
-{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "partOfSpeech": "noun|verb|adjective|adverb|phrasal verb|idiom", "sentenceFrames": [{"frame": "...", "es": "..."}], "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
+{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "partOfSpeech": "noun|verb|adjective|adverb|phrasal verb|idiom", "verbForms": {"past": "...", "past_participle": "...", "gerund": "...", "present_3rd": "..."}, "sentenceFrames": [{"frame": "...", "es": "..."}], "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
 - "correctedWord": if "${word}" is a single misspelled word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already correct, or if it's a multi-word idiom/expression (like "cost an arm and a leg"), repeat it unchanged — don't try to reduce a phrase down to one dictionary word.
@@ -447,6 +315,7 @@ Rules:
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
 - "partOfSpeech": one of noun, verb, adjective, adverb, phrasal verb, idiom — whichever fits "correctedWord" best.
+- "verbForms": ONLY if partOfSpeech is "verb" (or "phrasal verb") — its inflected forms: past simple (e.g. "ate"), past participle (e.g. "eaten"), gerund/-ing (e.g. "eating"), third-person present (e.g. "eats"). Otherwise omit it entirely.
 - "sentenceFrames": 2 to 4 natural sentence templates where "correctedWord" fits, with ____ marking where OTHER words go (the word itself written out, never as ____). e.g. for "deadline": "The ____ is tomorrow", "We met the ____". "es" is the Spanish translation of the frame. These are map-first patterns: built from THIS word, not generic ones like "I drink [noun]".
 - "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
@@ -1346,6 +1215,9 @@ export default function VocabGraph() {
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
+  // Estado del selector de TIEMPO VERBAL por palabra (persiste en el nodo):
+  // { [wordId]: "present" | "past" | "gerund" | "present3rd" } — solo si n.pos === "verb"
+  const [verbTenseSel, setVerbTenseSel] = useState({});
   const [editingWord, setEditingWord] = useState(false);
   const [editForm, setEditForm] = useState({ en: "", def: "", defEs: "", cat: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -1923,6 +1795,7 @@ export default function VocabGraph() {
           pos: form.pos?.trim() || null,          // partOfSpeech: noun/verb/adjective/phrasal verb/idiom
           tags: form.pos?.trim() ? [form.pos.trim().toLowerCase()] : undefined,
           sentenceFrames: form.sentenceFrames || [], // map-first patterns (frames IA de esta palabra)
+          verbForms: form.verbForms || ((form.pos === "verb" || form.pos === "phrasal verb") ? verbForms(form.word.trim()) : null), // pasado/participio/gerundio/3ª si es verbo
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
           userExamples: [],
@@ -1987,6 +1860,11 @@ export default function VocabGraph() {
         cat: details.category || f.cat,
         pos: details.partOfSpeech || f.pos || "",
         sentenceFrames: details.sentenceFrames || f.sentenceFrames || [],
+        verbForms: details.verbForms || f.verbForms || null,
+        // Si no hay formas IA y es verbo conocido local → fallback a la tabla/reglas
+        ...(!details.verbForms && (details.partOfSpeech === "verb" || details.partOfSpeech === "phrasal verb")
+          ? { verbForms: verbForms(details.correctedWord || f.word) }
+          : {}),
         connections,
         sentence: connections[0]?.sentence || f.sentence,
       }));
@@ -2475,6 +2353,13 @@ export default function VocabGraph() {
                                           >
                                             <Waves size={19} />
                                           </button>
+                                          <button
+                                            style={activeTab === "lab" ? styles.railBtnActive : styles.railBtn}
+                                            onClick={() => setActiveTab("lab")}
+                                            title={t("Sentence Lab")}
+                                          >
+                                            <FlaskConical size={19} />
+                                          </button>
                         <button
                           style={activeTab === "add" ? styles.railBtnActive : styles.railBtn}
                           onClick={() => setActiveTab("add")}
@@ -2499,6 +2384,10 @@ export default function VocabGraph() {
                       </nav>
                       <div style={styles.contentCol}>
 
+      {/* Sentence Lab: práctica libre con corrección + naturalización IA */}
+      {activeTab === "lab" && (
+        <SentenceLab styles={styles} uiLang={uiLang} />
+      )}
       {activeTab === "map" && (
       <>
       <div style={styles.legendRow}>
@@ -3618,6 +3507,42 @@ export default function VocabGraph() {
                       <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
                     )
                   )}
+                  {/* Selector de TIEMPO VERBAL: solo si la palabra es un verbo con formas.
+                      Al cambiar el tiempo, la oración de ejemplo se flexiona (paso/gerund). */}
+                  {(() => {
+                    const isVerb = (w.pos === "verb" || w.pos === "phrasal verb") && (w.verbForms || verbForms(w.en));
+                    if (!isVerb) return null;
+                    const vf = w.verbForms || verbForms(w.en);
+                    const tense = verbTenseSel[w.id] || "present";
+                    const TENSES = [
+                      { id: "present", label: "presente", form: vf.present },
+                      { id: "past", label: "pasado", form: vf.past },
+                      { id: "gerund", label: "gerundio", form: vf.gerund },
+                      { id: "present3rd", label: "3ª persona", form: vf.present_3rd },
+                    ].filter((t) => t.form);
+                    const active = TENSES.find((t) => t.id === tense) || TENSES[0];
+                    return (
+                      <div style={{ margin: "10px 0 6px" }}>
+                        <p style={styles.formHint}>Tiempo verbal (cambia cómo se flexiona la palabra):</p>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {TENSES.map((t) => (
+                            <button
+                              key={t.id}
+                              style={tense === t.id ? styles.patternChipActive : styles.patternChip}
+                              onClick={() => setVerbTenseSel((s) => ({ ...s, [w.id]: t.id }))}
+                            >
+                              {t.label}
+                            </button>
+                          ))}
+                        </div>
+                        {active && active.form && (
+                          <p style={{ ...styles.exampleEn, marginTop: 6, color: "#9fd9b8" }}>
+                            {w.en} → <b>{active.form}</b>
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
               {/* Modal editar conexiones — checkboxes para agregar/quitar enlaces */}
