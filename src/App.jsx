@@ -1242,6 +1242,7 @@ export default function VocabGraph() {
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
   const styles = applyTheme(BASE_STYLES, THEMES[data?.theme || "slate"] || THEMES.slate);
+  const [showTranslation, setShowTranslation] = useState(false);
   // Estado del selector de TIEMPO VERBAL por palabra (persiste en el nodo):
   // { [wordId]: "present" | "past" | "gerund" | "present3rd" } — solo si n.pos === "verb"
   const [verbTenseSel, setVerbTenseSel] = useState({});
