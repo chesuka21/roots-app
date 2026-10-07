@@ -4129,3 +4129,8 @@ function applyTheme(base, th) {
     sectionBody: { ...base.sectionBody, color: th.dim },
   };
 }
+
+/* `styles` de módulo (tema por defecto): lo consumen los componentes definidos
+   fuera de VocabGraph (SpeakInline, WordToken inline, Onboarding, etc.).
+   VocabGraph declara su propio `styles` con el tema elegido y lo sombrea. */
+const styles = applyTheme(BASE_STYLES, THEMES.slate);
