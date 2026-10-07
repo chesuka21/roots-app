@@ -446,6 +446,33 @@ const CATEGORY_COLORS = {
   relationships: "#E8A87C",
 };
 // fallback para categorías desconocidas
+const FALLBACK_CATEGORY_COLOR = "#8CC9D9";
+export function colorForCategory(cat) {
+  return CATEGORY_COLORS[cat] || FALLBACK_CATEGORY_COLOR;
+}
+/* Color del NODO por partOfSpeech (pedido pedagógico):
+   Nouns azules, Verbs verdes, Adjectives amarillo/naranja,
+   idioms/phrasal verbs púrpura — fisura visual de la parte de habla. */
+const POS_COLORS = {
+  noun: "#8CC9D9",          // azul
+  verb: "#6FBF8B",          // verde
+  adjective: "#D9A441",     // amarillo/naranja
+  adverb: "#C9A6D8",        // lila
+  "phrasal verb": "#C9862B", // naranja intenso
+  idiom: "#C98CC9",         // púrpura (phrasal/idiom)
+  default: "#8CC9D9",
+};
+export function colorForPos(pos) {
+  return POS_COLORS[pos] || POS_COLORS.default;
+}
+/* Tamaño del nodo por aprendizaje SRS:
+   recién agregados → más grandes; con repasos se reduce. */
+export function nodeRadius(node, reviews = {}) {
+  const NEW_R = 19;
+  const LOW_R = 10;
+  const s = Math.min(1, (reviews[node.id] || 0) / 8);
+  return Math.max(LOW_R, NEW_R - s * (NEW_R - LOW_R - 2));
+}
 const PALETTE = ["#8CA9C9", "#D98C5F", "#C98CC9", "#A9B16B", "#4FAE82", "#C9A15A", "#7BA9A0"];
 function catColor(cat, fallbackIndex = 0) {
   const k = String(cat || "").toLowerCase().replace(/[^a-z]/g, "");
@@ -1214,7 +1241,7 @@ export default function VocabGraph() {
   const [nextReviewInfo, setNextReviewInfo] = useState(null);
   const [exampleIdx, setExampleIdx] = useState(0);
   const [savedExample, setSavedExample] = useState(false);
-  const [showTranslation, setShowTranslation] = useState(false);
+  const styles = applyTheme(BASE_STYLES, THEMES[data?.theme || "slate"] || THEMES.slate);
   // Estado del selector de TIEMPO VERBAL por palabra (persiste en el nodo):
   // { [wordId]: "present" | "past" | "gerund" | "present3rd" } — solo si n.pos === "verb"
   const [verbTenseSel, setVerbTenseSel] = useState({});
@@ -1458,6 +1485,8 @@ export default function VocabGraph() {
   }, [data]);
 
   const learnedSet = new Set(data?.learned || []);
+  // Historial de repasos por nodo (usado en nodeRadius para encoger con práctica)
+  const nodeReviews = Object.fromEntries(Object.entries(data?.srs || {}).map(([id, s]) => [id, s?.reviews?.length || 0]));
 
   const status = useCallback(
     (id) => {
@@ -2225,6 +2254,19 @@ export default function VocabGraph() {
                           ))}
                         </select>
 
+                        {/* Selector de TEMA visual (Dark Slate / Midnight / OLED / Light) */}
+                        <label style={styles.label}>{t("Tema visual")}</label>
+                        <select
+                          style={styles.input}
+                          value={data?.theme || "slate"}
+                          onChange={(e) => setData((prev) => ({ ...prev, theme: e.target.value }))}
+                          title="Cambia los colores de fondo de toda la app"
+                        >
+                          {Object.values(THEMES).map((th) => (
+                            <option key={th.id} value={th.id}>{th.name}</option>
+                          ))}
+                        </select>
+
                         {currentInterests.length > 0 && (
                           <div style={styles.tagCloud}>
                             {currentInterests.map((it) => (
@@ -2498,11 +2540,11 @@ export default function VocabGraph() {
 
         {nodeData.map((n) => {
           const st = status(n.id);
-          const categoryColor = catColor(n.cat, nodeData.indexOf(n));
+          const categoryColor = colorForPos(n.pos) || catColor(n.cat, nodeData.indexOf(n));
           const deg = degreeMap[n.id] || 0;
-          const r = (st === "learned" ? 15 : st === "suggested" ? 12 : 8) + Math.min(deg, 8);
-          // nodo fill: categoría (si existe) + estado (learned=suave, suggested=amarillo, new=gris)
-          const fill = st === "learned" ? categoryColor : st === "suggested" ? "#D9A441" : "#2a343c";
+          const r = nodeRadius(n, nodeReviews); // recién añadidas → más grandes; se reduce con repasos SRS
+          // nodo fill: color por partOfSpeech + estado (learned=suave, suggested=amarillo, new=gris)
+          const fill = st === "learned" ? colorForPos(n.pos) || categoryColor : st === "suggested" ? "#D9A441" : "#2a343c";
           const fillOpacity = st === "learned" ? 0.9 : st === "suggested" ? 0.9 : 0.7;
           return (
             <g
@@ -3048,6 +3090,11 @@ export default function VocabGraph() {
                       settings={settings}
                       grantXp={grantXp}
                       activateStreak={activateStreak}
+                      onWordTap={(w) => {
+                        // Quick-add desde Patterns: abrir el form de addWord con la palabra
+                        setForm({ word: w, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+                        setActiveTab("add");
+                      }}
                       styles={styles}
                     />
                   )}
@@ -3872,7 +3919,18 @@ export default function VocabGraph() {
 }
 
 /* ---------- Styles ---------- */
-const styles = {
+/* Temas de la app — seleccionables en Ajustes (data.theme)
+   El styles final usa THEMES[theme] (aplica variables de color). */
+import { THEMES, themeNameOf } from "./data/themes.js";
+
+// Devuelve el objeto styles completo con un tema aplicado (bg/header/text).
+// (El styles original — below — es el fallbacks por defecto (Slate). Se exportan
+//  temas completos y para cambiar dinámicamente harías styles = makeStyles(THEMES[data.theme])).
+// Por simplicidad y para no romper 200+ referencias, slate/others difieren solo
+// en los colores base — el resto del objeto se comparte.
+
+
+const BASE_STYLES = {
   app: {
       fontFamily: "'Georgia', 'Iowan Old Style', serif",
       background: "radial-gradient(1200px 500px at 50% -120px, #1d2f2a 0%, #12181b 55%), radial-gradient(900px 400px at 100% 100%, #14202b 0%, transparent 60%), #12181b",
@@ -4004,6 +4062,13 @@ const styles = {
   tapHint: { fontSize: 10, color: "#5a6763", margin: "-10px 0 14px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   exampleBox: { background: "#12181b", borderRadius: 10, padding: "12px 14px", marginBottom: 18, borderLeft: "3px solid #6FBF8B" },
   exampleEn: { margin: 0, fontSize: 14.5, color: "#eae4d8" },
+  token: {},
+  tokenClickable: {
+    cursor: "pointer",
+    borderBottom: "1px dotted #6FBF8B",
+    color: "#9fd9b8",
+    paddingBottom: 1,
+  },
   bridgeNote: { margin: "6px 0 0", fontSize: 11.5, color: "#D9A441", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   mineNote: { margin: "8px 0 0", fontSize: 11.5, color: "#8cc9d9", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   smallAddBtn2: { marginTop: 10, display: "flex", alignItems: "center", gap: 6, background: "#2a3a3d", border: "1px solid #3d504f", color: "#9fd9b8", borderRadius: 8, padding: "7px 11px", fontSize: 12, cursor: "pointer", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
@@ -4047,3 +4112,19 @@ const styles = {
     xpBarFill: { height: "100%", background: "linear-gradient(90deg, #6FBF8B, #8cc9d9)", borderRadius: 3, transition: "width 0.4s ease" },
     xpToast: { position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", background: "#2a3a3d", border: "1px solid #6FBF8B", color: "#9fd9b8", borderRadius: 20, padding: "8px 16px", fontSize: 14, fontWeight: 600, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", zIndex: 70, boxShadow: "0 6px 20px rgba(0,0,0,0.5)", animation: "xpPop 0.25s ease" },
   };
+
+// Aplica solo los 6 colores clave del tema sobre los defaults (slate) sin tocar el resto
+// — los colores de cards/textos suaves son neutros y sirven tanto en Light como en Dark.
+function applyTheme(base, th) {
+  return {
+    ...base,
+    app: { ...base.app, background: th.background, color: th.text },
+    header: { ...base.header, background: th.headerBg, border: `1px solid ${th.headerBorder}` },
+    card: base.card ? { ...base.card, background: th.cardBg, border: `1px solid ${th.cardBorder}` } : undefined,
+    tab: { ...base.tab, color: th.faint, border: `1px solid ${th.cardBorder}` },
+    tabActive: { ...base.tabActive, color: th.accent, border: `1px solid ${th.accent}` },
+    section: base.section ? { ...base.section, border: `1px solid ${th.cardBorder}`, background: th.sectionBg } : undefined,
+    sectionTitle: { ...base.sectionTitle, color: th.text },
+    sectionBody: { ...base.sectionBody, color: th.dim },
+  };
+}

@@ -153,6 +153,7 @@ export const TRANSLATIONS = {
         "Suena natural.": "Sounds natural.",
         "Más natural:": "More natural:",
         "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Sentences you practice here also join your map if you tap the word you add.",
+    "Tema visual": "Visual theme",
   },
   es: {
     // — navegación —
@@ -303,6 +304,7 @@ export const TRANSLATIONS = {
     "Suena natural.": "Suena natural.",
     "Más natural:": "Más natural:",
     "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.",
+    "Tema visual": "Tema visual",
   },
   fr: {
     // — navigation —
@@ -453,6 +455,7 @@ export const TRANSLATIONS = {
     "Suena natural.": "Ça sonne naturel.",
     "Más natural:": "Plus naturel :",
     "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Les phrases que tu pratiques ici rejoignent aussi ta carte si tu touches le mot que tu ajoutes.",
+    "Tema visual": "Thème visuel",
   },
   de: {
     // — Navigation —
@@ -603,6 +606,7 @@ export const TRANSLATIONS = {
     "Suena natural.": "Klingt natürlich.",
     "Más natural:": "Naturlicher:",
     "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "Sätze, die du hier übst, landen auch auf deiner Karte, wenn du das hinzugefügte Wort antippst.",
+    "Tema visual": "Visuelles Thema",
   },
   pt: {
     // — navegação —
@@ -753,6 +757,7 @@ export const TRANSLATIONS = {
     "Suena natural.": "Soa natural.",
     "Más natural:": "Mais natural:",
     "Las oraciones que practicas aquí también entran al mapa si tocas la palabra que añades.": "As frases que você pratica aqui também entram no mapa se você tocar na palavra adicionada.",
+    "Tema visual": "Tema visual",
   },
 };
 

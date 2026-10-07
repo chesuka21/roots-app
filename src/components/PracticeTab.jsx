@@ -1,9 +1,10 @@
-/* ---------- Practice Tab — Patterns dinámicos con grafo semántico ----------
+/* PracticeTab — Patterns dinámicos con grafo semántico
    Cada nivel usa palabras REALES del vocabulario del usuario. Completar 2
    patterns bien de un nivel desbloquea el siguiente.
    Generación: grafo tipado local (offline instantáneo) + validación semántica IA. */
 import { useState, useMemo } from "react";
 import { Sparkles, Loader2, ChevronRight, Check } from "lucide-react";
+import WordToken from "./WordToken.jsx";
 import { PATTERN_LEVELS } from "../data/patterns.js";
 import { buildSeedGraph, indexGraph } from "../lib/graph.js";
 import { fillPattern } from "../lib/generator.js";
@@ -59,7 +60,7 @@ function applyUserEdges(graph) {
 
 // (validateLocally eliminada — sustituida por checkSentence dentro del componente)
 
-export default function PracticeTab({ data, setData, learnedSet, wordbank, grantXp, activateStreak, styles }) {
+export default function PracticeTab({ data, setData, learnedSet, wordbank, settings, grantXp, activateStreak, styles, t = (k) => k, onWordTap }) {
   const [activeLevel, setActiveLevel] = useState(null);
   const [exercise, setExercise] = useState(null);
   const [userSentence, setUserSentence] = useState("");
@@ -338,8 +339,14 @@ export default function PracticeTab({ data, setData, learnedSet, wordbank, grant
                     </button>
                   ) : (
                     <>
+                      {/* Modelo: palabras de la oración son clickeables si NO están ya en el mapa */}
                       <p style={styles.formHint}>
-                        Modelo: <b>{exercise.targetText}</b>
+                        Modelo: <WordToken
+                          text={exercise.targetText}
+                          wordsInMap={new Set(Object.values(data.nodes).map((n) => n.en?.toLowerCase()))}
+                          onAdd={(w) => onWordTap?.(w)}
+                          styles={styles}
+                        />
                       </p>
                       <input
                         style={styles.input}
