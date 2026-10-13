@@ -944,7 +944,6 @@ function pickQuizQuestion(rung, asked) {
   const pool = (QUIZ_BANK[rung] || []).filter((q) => !asked.includes(q.q));
   return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
 }
-export { QUIZ_BANK, QUIZ_I18N, QUIZ_LENGTH, SELF_TO_RUNG, CEFR_ORDER, nextRung, pickQuizQuestion, quizQuestionText, PRESET_INTERESTS };
 
 /* ---------- Component ---------- */
 const SpinCSS = () => (

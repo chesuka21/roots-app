@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Sprout, X, Check, ChevronRight } from "lucide-react";
 import { SUPPORTED_LANGUAGES, languageLabel } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
-import { QUIZ_LENGTH, SELF_TO_RUNG, nextRung, pickQuizQuestion, quizQuestionText, PRESET_INTERESTS } from "../App.jsx";
+import { QUIZ_LENGTH, SELF_TO_RUNG, nextRung, pickQuizQuestion, quizQuestionText, PRESET_INTERESTS } from "../data/quiz.js";
 
 export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLangChange }) {
   // Textos de la interfaz traducidos con `t` (native_language del usuario);
