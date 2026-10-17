@@ -19,6 +19,7 @@ import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUs
    JSON, multi-proveedor). Los componentes importan desde ahí — sin duplicación inline. */
 import { callClaudeJson } from "./lib/ai.js";
 import SentenceLab from "./components/sandbox/SentenceLab.jsx";
+import WordToken from "./components/WordToken.jsx";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
   "a", "an", "the", "to", "of", "when", "who", "that", "which", "with", "for", "and", "or",
@@ -451,28 +452,28 @@ const FALLBACK_CATEGORY_COLOR = "#8CC9D9";
 export function colorForCategory(cat) {
   return CATEGORY_COLORS[cat] || FALLBACK_CATEGORY_COLOR;
 }
-/* Color del NODO por partOfSpeech (pedido pedagógico):
-   Nouns azules, Verbs verdes, Adjectives amarillo/naranja,
-   idioms/phrasal verbs púrpura — fisura visual de la parte de habla. */
+/* Color del NODO por partOfSpeech (paleta pedida):
+   Nouns azul, Verbs verde, Adjectives amarillo/naranja,
+   phrasal verbs/idioms púrpura — fisura visual de la parte de habla. */
 const POS_COLORS = {
-  noun: "#8CC9D9",          // azul
-  verb: "#6FBF8B",          // verde
-  adjective: "#D9A441",     // amarillo/naranja
-  adverb: "#C9A6D8",        // lila
-  "phrasal verb": "#C9862B", // naranja intenso
-  idiom: "#C98CC9",         // púrpura (phrasal/idiom)
+  noun: "#3B82F6",           // azul
+  verb: "#22C55E",           // verde
+  adjective: "#F59E0B",      // amarillo/naranja
+  adverb: "#C9A6D8",         // lila (extensión)
+  "phrasal verb": "#A855F7", // púrpura
+  idiom: "#A855F7",          // púrpura
   default: "#8CC9D9",
 };
 export function colorForPos(pos) {
   return POS_COLORS[pos] || POS_COLORS.default;
 }
-/* Tamaño del nodo por aprendizaje SRS:
-   recién agregados → más grandes; con repasos se reduce. */
+/* Tamaño del nodo por aprendizaje SRS (rango pedido):
+   palabras nuevas = nodos grandes (17-19px); dominadas/repasadas = pequeños (8-10px). */
 export function nodeRadius(node, reviews = {}) {
-  const NEW_R = 19;
-  const LOW_R = 10;
-  const s = Math.min(1, (reviews[node.id] || 0) / 8);
-  return Math.max(LOW_R, NEW_R - s * (NEW_R - LOW_R - 2));
+  const NEW_R = 18;
+  const LOW_R = 9;
+  const s = Math.min(1, (reviews[node.id] || 0) / 6); // dominada con ~6 repasos
+  return Math.max(LOW_R, NEW_R - s * (NEW_R - LOW_R));
 }
 const PALETTE = ["#8CA9C9", "#D98C5F", "#C98CC9", "#A9B16B", "#4FAE82", "#C9A15A", "#7BA9A0"];
 function catColor(cat, fallbackIndex = 0) {
@@ -2637,11 +2638,22 @@ export default function VocabGraph() {
                         return (
                           <div>
                             <p style={styles.tierLabel}>From your map — patterns for YOUR words</p>
-                            <p style={styles.formHint}>Marcos generados para las palabras de tu mapa (nivel {userCefrNow}). Practícalos con tus propias frases — se registran en el SRS.</p>
+                            <p style={styles.formHint}>Marcos generados para las palabras de tu mapa (nivel {userCefrNow}). Practícalos con tus propias frases — se registran en el SRS. Toca cualquier palabra del marco para agregarla al mapa.</p>
                             {mapFrames.slice(0, 12).map((f) => (
                               <div key={f.id} style={styles.patternCard}>
                                 <div style={styles.patternTitleRow}>
-                                  <span style={styles.patternEn}>{f.frame}</span>
+                                  {/* Marco clickeable: cada palabra desconocida se puede agregar al mapa */}
+                                  <span style={styles.patternEn}>
+                                    <WordToken
+                                      text={f.frame}
+                                      wordsInMap={new Set(Object.values(data.nodes).map((n) => (n.en || "").toLowerCase()))}
+                                      onAdd={(word) => {
+                                        setForm({ word, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+                                        setActiveTab("add");
+                                      }}
+                                      styles={styles}
+                                    />
+                                  </span>
                                   {data.level !== "advanced" && f.es && <span style={styles.patternEs}>{f.es}</span>}
                                   <span style={{ ...styles.patternSrsTag, color: "#8CC9D9", borderColor: "#2a4a52" }}>{f.word}</span>
                                 </div>
@@ -3251,7 +3263,7 @@ export default function VocabGraph() {
                     <button style={styles.learnBtn} onClick={() => { saveWordEdit(w.id, editForm); setEditingWord(false); }}>
                       Save changes
                     </button>
-                    <button style={styles.tab} onClick={() => setEditingWord(false)}>Cancel</button>
+                    <button style={styles.tab} onClick={() => setEditingWord(false)}><X size={13} style={{ verticalAlign: "-2px" }} /> Cancel</button>
                   </div>
                 </>
               ) : (
@@ -3302,22 +3314,29 @@ export default function VocabGraph() {
                     )
                   )}
                   {/* Selector de TIEMPO VERBAL: solo si la palabra es un verbo con formas.
-                      Al cambiar el tiempo, la oración de ejemplo se flexiona (paso/gerund). */}
+                      Present / Past Simple / Present Perfect / Continuous — la oración
+                      de ejemplo se re-construye con la forma conjugada del verbo. */}
                   {(() => {
                     const isVerb = (w.pos === "verb" || w.pos === "phrasal verb") && (w.verbForms || verbForms(w.en));
                     if (!isVerb) return null;
                     const vf = w.verbForms || verbForms(w.en);
                     const tense = verbTenseSel[w.id] || "present";
                     const TENSES = [
-                      { id: "present", label: "presente", form: vf.present },
-                      { id: "past", label: "pasado", form: vf.past },
-                      { id: "gerund", label: "gerundio", form: vf.gerund },
-                      { id: "present3rd", label: "3ª persona", form: vf.present_3rd },
+                      { id: "present", label: "Present", form: vf.present },
+                      { id: "past", label: "Past Simple", form: vf.past },
+                      { id: "perfect", label: "Present Perfect", form: `have ${vf.past_participle}` },
+                      { id: "continuous", label: "Continuous", form: `am ${vf.gerund}` },
                     ].filter((t) => t.form);
                     const active = TENSES.find((t) => t.id === tense) || TENSES[0];
+                    // oración de ejemplo con el verbo conjugado: se sustituye la forma
+                    // base (o su 3ª persona) dentro de la primera oración disponible
+                    const baseSentence = (w.sentenceFrames?.[0]?.frame || w.standalone || "").replace(/____/g, "…");
+                    const flexed = baseSentence
+                      ? baseSentence.replace(new RegExp(`\\b${vf.present}\\b|\\b${vf.present_3rd}\\b`, "gi"), active.form)
+                      : null;
                     return (
                       <div style={{ margin: "10px 0 6px" }}>
-                        <p style={styles.formHint}>Tiempo verbal (cambia cómo se flexiona la palabra):</p>
+                        <p style={styles.formHint}>Tiempo verbal (la oración se flexiona):</p>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {TENSES.map((t) => (
                             <button
@@ -3331,7 +3350,7 @@ export default function VocabGraph() {
                         </div>
                         {active && active.form && (
                           <p style={{ ...styles.exampleEn, marginTop: 6, color: "#9fd9b8" }}>
-                            {w.en} → <b>{active.form}</b>
+                            {flexed || `${w.en} →`} <b>{flexed ? "" : active.form}</b>{flexed ? ` (${active.form})` : ""}
                           </p>
                         )}
                       </div>
@@ -3370,7 +3389,7 @@ export default function VocabGraph() {
                         })}
                     </div>
                     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                      <button style={styles.tab} onClick={() => setEditingConnections(false)}>Cancel</button>
+                      <button style={styles.tab} onClick={() => setEditingConnections(false)}><X size={13} style={{ verticalAlign: "-2px" }} /> Cancel</button>
                       <button
                         style={styles.learnBtn}
                         onClick={() => {

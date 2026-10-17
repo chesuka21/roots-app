@@ -150,7 +150,11 @@ async function callGemini(prompt, maxTokens) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt + "\n\nReturn ONLY valid JSON." }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: Math.min(maxTokens || 400, 1200) },
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: Math.min(maxTokens || 400, 1200),
+          responseMimeType: "application/json", // JSON mode nativo: sin fences ni prosa
+        },
       }),
     },
     9000
