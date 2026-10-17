@@ -39,14 +39,12 @@ function keywordsFromDefinition(definition, max = 4) {
     .join(" ");
 }
 
-async function findImages(word, category, definition) {
-  // Search on more than the bare word so ambiguous or abstract words land on
-  // the right sense — e.g. "meeting" alone could be anything, but "meeting
-  // time people gather talk" (word + category + definition keywords) points
-  // straight at the office/gathering meaning described in its definition.
-  // + enviamos `word` aparte para reforzar el resultado en el backend
-  const parts = [word, category, keywordsFromDefinition(definition)].filter(Boolean);
-  const query = parts.join(" ");
+async function findImages(sceneQuery, word) {
+  // La query ya viene como escena visual concreta (imageSearchQuery de la IA,
+  // ej. "person borrowing a book in library") — se pasa DIRECTA a Unsplash
+  // junto a `word` para reforzar el sentido. El backend añade los filtros
+  // anti-texto (content_filter=high, orientation=landscape, +photo).
+  const query = sceneQuery || word;
   try {
     const res = await fetch(`/api/pexels?q=${encodeURIComponent(query)}&word=${encodeURIComponent(word)}`);
     const data = await res.json();
@@ -309,9 +307,10 @@ async function generateWordDetails(word, existingWords) {
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
-{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "partOfSpeech": "noun|verb|adjective|adverb|phrasal verb|idiom", "verbForms": {"past": "...", "past_participle": "...", "gerund": "...", "present_3rd": "..."}, "sentenceFrames": [{"frame": "...", "es": "..."}], "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
+{"correctedWord": "...", "definition": "...", "definitionEs": "...", "category": "...", "partOfSpeech": "noun|verb|adjective|adverb|phrasal verb|idiom", "verbForms": {"past": "...", "past_participle": "...", "gerund": "...", "present_3rd": "..."}, "imageSearchQuery": "...", "sentenceFrames": [{"frame": "...", "es": "..."}], "connections": [{"word": "<exact spelling of an existing word from the list above>", "sentence": "..."}]}
 
 Rules:
+- "imageSearchQuery": a visual, CONCRETE, PHYSICAL, photographable scene description in English (3-7 words) that represents the word's meaning — NO text/letters/signs in the scene, no abstract concepts, no motivational graphics. Describe what a camera would actually see: a person doing something, an object in use, a specific place. Examples — "borrow" → "person borrowing a book in library hand close up"; "eager" → "excited child waiting at birthday party"; "reluctant" → "person hesitating at crossroad decision"; "deadline" → "person working late clock pressure desk". This query is sent to a stock-photo search, so favor realistic photography terms.
 - "correctedWord": if "${word}" is a single misspelled word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already correct, or if it's a multi-word idiom/expression (like "cost an arm and a leg"), repeat it unchanged — don't try to reduce a phrase down to one dictionary word.
 - "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
@@ -957,7 +956,7 @@ export default function VocabGraph() {
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [form, setForm] = useState({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+  const [form, setForm] = useState({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "", imageSearchQuery: "" });
   const [manualLink, setManualLink] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
@@ -1249,9 +1248,39 @@ export default function VocabGraph() {
   );
 
   const [imgSearching, setImgSearching] = useState(false);
+  // Generación IA de imagen (Pollinations — gratis, sin API key): ilustración a
+  // medida para palabras abstractas donde Unsplash no encuentra foto adecuada.
+  const [aiImgBusy, setAiImgBusy] = useState(null); // id del nodo en generación
+  const generateAiImage = async (id, word, sceneQuery) => {
+    setAiImgBusy(id);
+    // Prompt: escena visual concreta de la IA (o definición) + estilo fotografía
+    const prompt = encodeURIComponent(
+      `${sceneQuery || word}, realistic photography, no text, no letters, simple clean background, educational illustration`
+    );
+    const url = `https://image.pollinations.ai/prompt/${prompt}?width=640&height=480&nologo=true&seed=${Date.now() % 100000}`;
+    // Pollinations genera la imagen con solo abrir la URL — la precargamos y si
+    // responde OK la guardamos en el nodo como imagen extra.
+    const ok = await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+      setTimeout(() => resolve(false), 20000); // timeout de generaci��n
+    });
+    if (ok) {
+      setData((prev) => ({
+        ...prev,
+        nodes: { ...prev.nodes, [id]: { ...prev.nodes[id], images: [...(prev.nodes[id]?.images || []), url] } },
+      }));
+    }
+    setAiImgBusy(null);
+  };
   const searchImagesForNode = async (id, word, category, definition) => {
     setImgSearching(true);
-    const images = await findImages(word, category, definition);
+    // Prioridad: imageSearchQuery guardado en el nodo (escena IA) → keywords de definición
+    const node = data?.nodes?.[id] || {};
+    const query = node.imageSearchQuery || [word, category, keywordsFromDefinition(definition)].filter(Boolean).join(" ");
+    const images = await findImages(query, word);
     if (images.length) {
       setData((prev) => ({ ...prev, nodes: { ...prev.nodes, [id]: { ...prev.nodes[id], images } } }));
     }
@@ -1572,6 +1601,7 @@ export default function VocabGraph() {
           pos: form.pos?.trim() || null,          // partOfSpeech: noun/verb/adjective/phrasal verb/idiom
           tags: form.pos?.trim() ? [form.pos.trim().toLowerCase()] : undefined,
           sentenceFrames: form.sentenceFrames || [], // map-first patterns (frames IA de esta palabra)
+          imageSearchQuery: form.imageSearchQuery || "", // escena visual concreta (regenerar imágenes)
           verbForms: form.verbForms || ((form.pos === "verb" || form.pos === "phrasal verb") ? verbForms(form.word.trim()) : null), // pasado/participio/gerundio/3ª si es verbo
           images: form.images,
           standalone: form.sentence.trim() || form.def.trim(),
@@ -1589,7 +1619,7 @@ export default function VocabGraph() {
       }
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
-    setForm({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+    setForm({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "", imageSearchQuery: "" });
     setManualLink("");
     resetZoom();
     setActiveTab("map");
@@ -1607,6 +1637,7 @@ export default function VocabGraph() {
         let generatedWord = form.word.trim();
         let generatedPos = null;
         let generatedFrames = [];
+        let generatedImageQuery = "";
         try {
           const { fromLocal, details } = await generateWordDetailsSmart(form.word.trim(), existingWords);
           const byName = {};
@@ -1629,6 +1660,7 @@ export default function VocabGraph() {
       generatedWord = details.correctedWord || generatedWord;
       generatedPos = details.partOfSpeech || generatedPos;
       generatedFrames = details.sentenceFrames || generatedFrames;
+      generatedImageQuery = details.imageSearchQuery || ""; // escena visual concreta para Unsplash
       setForm((f) => ({
         ...f,
         word: details.correctedWord || f.word,
@@ -1637,6 +1669,7 @@ export default function VocabGraph() {
         cat: details.category || f.cat,
         pos: details.partOfSpeech || f.pos || "",
         sentenceFrames: details.sentenceFrames || f.sentenceFrames || [],
+        imageSearchQuery: details.imageSearchQuery || f.imageSearchQuery || "",
         verbForms: details.verbForms || f.verbForms || null,
         // Si no hay formas IA y es verbo conocido local → fallback a la tabla/reglas
         ...(!details.verbForms && (details.partOfSpeech === "verb" || details.partOfSpeech === "phrasal verb")
@@ -1653,8 +1686,11 @@ export default function VocabGraph() {
       return;
     }
 
-    // 2) images: real search now works (this is a real server, not a sandboxed artifact)
-    const images = await findImages(generatedWord, generatedCategory, generatedDefinition);
+    // 2) images: escena visual concreta (imageSearchQuery de la IA) en vez de la
+    //    palabra literal — evita fotos abstractas/motivacionales en palabras como
+    //    "borrow" o "eager". Fallback: keywords de la definición.
+    const imageQuery = generatedImageQuery || [generatedWord, generatedCategory, keywordsFromDefinition(generatedDefinition)].filter(Boolean).join(" ");
+    const images = await findImages(imageQuery, generatedWord);
     setForm((f) => ({ ...f, images }));
     setGenerating(false);
   };
@@ -2648,7 +2684,7 @@ export default function VocabGraph() {
                                       text={f.frame}
                                       wordsInMap={new Set(Object.values(data.nodes).map((n) => (n.en || "").toLowerCase()))}
                                       onAdd={(word) => {
-                                        setForm({ word, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+                                        setForm({ word, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "", imageSearchQuery: "" });
                                         setActiveTab("add");
                                       }}
                                       styles={styles}
@@ -2851,7 +2887,7 @@ export default function VocabGraph() {
                       activateStreak={activateStreak}
                       onWordTap={(w) => {
                         // Quick-add desde Patterns: abrir el form de addWord con la palabra
-                        setForm({ word: w, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "" });
+                        setForm({ word: w, def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "", imageSearchQuery: "" });
                         setActiveTab("add");
                       }}
                       styles={styles}
@@ -3236,17 +3272,27 @@ export default function VocabGraph() {
                   <span style={styles.patternNodeCefr}>{w.cefr}</span>
                   <span style={styles.patternNodeTitle}>{w.en}</span>
                 </div>
-              ) : hasOwnImages ? (
-                <div style={styles.gallery}>
-                  {w.images.map((src, i) => (
-                    <img key={i} src={src} alt={w.en} style={styles.galleryImg} />
-                  ))}
-                </div>
               ) : (
-                <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en, w.cat, w.def)} disabled={imgSearching}>
-                  {imgSearching ? <Loader2 size={15} className="spin" /> : <CategoryIcon cat={w.cat} size={20} />}
-                  {imgSearching ? "Searching…" : "Find images"}
-                </button>
+                <>
+                  {hasOwnImages && (
+                    <div style={styles.gallery}>
+                      {w.images.map((src, i) => (
+                        <img key={i} src={src} alt={w.en} style={styles.galleryImg} />
+                      ))}
+                    </div>
+                  )}
+                  {/* Búsqueda Unsplash (escena IA) + fallback de generación IA */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                    <button style={styles.findImgBtn} onClick={() => searchImagesForNode(w.id, w.en, w.cat, w.def)} disabled={imgSearching || aiImgBusy === w.id}>
+                      {imgSearching ? <Loader2 size={15} className="spin" /> : <CategoryIcon cat={w.cat} size={20} />}
+                      {imgSearching ? "Searching…" : hasOwnImages ? "More images" : "Find images"}
+                    </button>
+                    <button style={styles.findImgBtn} onClick={() => generateAiImage(w.id, w.en, w.imageSearchQuery || w.def)} disabled={aiImgBusy === w.id || imgSearching}>
+                      {aiImgBusy === w.id ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                      {aiImgBusy === w.id ? "Generating…" : "✨ Generar imagen con IA"}
+                    </button>
+                  </div>
+                </>
               )}
 
               {editingWord ? (
