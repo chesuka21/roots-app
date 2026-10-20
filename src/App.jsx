@@ -1213,10 +1213,24 @@ export default function VocabGraph() {
       x: prevPos[id]?.x ?? w / 2 + (Math.random() - 0.5) * 40,
       y: prevPos[id]?.y ?? h / 2 + (Math.random() - 0.5) * 40,
     }));
-    // aristas solo entre nodos de vocabulario (las pattern↔word se dibujan aparte)
+    // aristas solo entre nodos de vocabulario EXISTENTES (las pattern↔word se
+    // dibujan aparte). FIX crash "node not found: X": si una arista apunta a un
+    // nodo que ya no existe (borrado, pull de nube incompleto, seed parcial),
+    // d3-force lanza al inicializar. Se filtran las huérfanas de raíz.
     const linkData = data.edges
-      .filter((e) => data.nodes[e.source]?.kind !== "pattern" && data.nodes[e.target]?.kind !== "pattern")
+      .filter((e) => data.nodes[e.source] && data.nodes[e.target])
+      .filter((e) => data.nodes[e.source].kind !== "pattern" && data.nodes[e.target].kind !== "pattern")
       .map((e) => ({ ...e }));
+    // sanitización silenciosa: persistir el estado SIN las aristas huérfanas
+    // para que el problema no reaparezca en cada rebuild del grafo.
+    const orphanCount = data.edges.length - linkData.length;
+    if (orphanCount > 0) {
+      console.warn(`[roots] ${orphanCount} arista(s) huérfana(s) eliminada(s) del mapa`);
+      setData((prev) => {
+        const clean = (prev.edges || []).filter((e) => prev.nodes[e.source] && prev.nodes[e.target]);
+        return clean.length === (prev.edges || []).length ? prev : { ...prev, edges: clean };
+      });
+    }
 
     if (simRef.current) simRef.current.sim.stop();
 
