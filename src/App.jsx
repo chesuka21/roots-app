@@ -20,6 +20,7 @@ import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUs
 import { callClaudeJson } from "./lib/ai.js";
 import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 import WordToken from "./components/WordToken.jsx";
+import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase } from "./lib/edgeEngine.js";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
   "a", "an", "the", "to", "of", "when", "who", "that", "which", "with", "for", "and", "or",
@@ -1042,11 +1043,11 @@ export default function VocabGraph() {
     const [xpToast, setXpToast] = useState(null); // { id, amount } — se renderiza en el header
     const xpToastIdRef = useRef(0);
     const lastGradeRef = useRef(null); // snapshot para "Undo grade"
-    const showXpToast = (amount) => {
-      if (!amount) return;
+    const showXpToast = (amount, customMsg = null) => {
+      if (!amount && !customMsg) return;
       xpToastIdRef.current += 1;
       const id = xpToastIdRef.current;
-      setXpToast({ id, amount });
+      setXpToast({ id, amount, message: customMsg });
       setTimeout(() => setXpToast((t) => (t?.id === id ? null : t)), 1800);
     };
     // Concede XP sobre un objeto `prev` (data) y lanza el toast si hay ganancia.
@@ -1345,6 +1346,31 @@ export default function VocabGraph() {
       lastGradeRef.current = null; // el undo solo aplica a la tarjeta actual
       if (next >= reviewQueue.length) {
         setReviewActive(false);
+        // ── RE-EVALUACIÓN AUTOMÁTICA DE ARISTAS (fin de la ronda SRS) ──
+        // Cada palabra repasada con éxito evoluciona su red según su fase:
+        // 4-7 reps → conexiones secundarias; 8+ → hub con puentes a otros clusters.
+        // Las aristas nuevas suben a Supabase con el sync normal (edges completo).
+        try {
+          const gradedIds = reviewQueue.filter((rid) => (data.srs?.[rid]?.reps || 0) > 0);
+          setData((prev) => {
+            let edges = prev.edges || [];
+            let totalAdded = 0;
+            for (const rid of gradedIds) {
+              const { added } = recalculateEdgesFor(rid, { ...prev, edges }, 2);
+              for (const e of added) {
+                if (!edges.some((x) => (x.source === e.source && x.target === e.target) || (x.source === e.target && x.target === e.source))) {
+                  edges = [...edges, e];
+                  totalAdded++;
+                }
+              }
+            }
+            if (totalAdded > 0 && !cloudSyncing) {
+              // toast sutil: la red creció sola durante el repaso
+              showXpToast(0, `+${totalAdded} nueva${totalAdded === 1 ? "" : "s"} conexión${totalAdded === 1 ? "" : "es"} en tu mapa`);
+            }
+            return totalAdded > 0 ? { ...prev, edges } : prev;
+          });
+        } catch (e) { /* el repaso nunca debe fallar por el edge engine */ }
       } else {
         setReviewPos(next);
         setExampleIdx(0);
@@ -1615,6 +1641,12 @@ export default function VocabGraph() {
       // del onboarding (avanzados → solo estructuras B2/C1/C2).
       const userCefr = prev.cefr || TIER_TO_CEFR[prev.level] || "A2";
       for (const e of linkWordToPatterns(nodes[id], userCefr)) {
+        if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
+      }
+      // ── AUTO-LINKING: 1-3 aristas automáticas hacia los nodos más afines ──
+      // Heurística local (0 tokens, instantáneo). Sin esto la palabra queda
+      // flotando si la IA no sugirió conexiones o el usuario no creó ninguna.
+      for (const e of autoLinkNewWord(nodes[id], nodes, [...prev.edges, ...newEdges], 3)) {
         if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
       }
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
@@ -1980,7 +2012,7 @@ export default function VocabGraph() {
 
                             {xpToast && (
                 <div key={xpToast.id} style={styles.xpToast}>
-                  +{xpToast.amount} XP
+                  {xpToast.message ? xpToast.message : <>+{xpToast.amount} XP</>}
                 </div>
               )}
 
@@ -2281,7 +2313,11 @@ export default function VocabGraph() {
           const ifPartially = (partiallyLit && (wEdge >= edgeMinW || adjacentSel)) || wEdge >= edgeMinW;
           if (!ifLit && !ifPartially) return null;
           // grosor por frecuencia de repaso: 0.8..2.6 según weight
-          const thick = 0.8 + Math.min(1, Math.max(0, (wEdge - 0.3) / 0.7)) * 1.8;
+          let thick = 0.8 + Math.min(1, Math.max(0, (wEdge - 0.3) / 0.7)) * 1.8;
+          // ── SRS MATURITY LINKS: las aristas de un nodo HUB (8+ repasos) son
+          // más gruesas — la palabra consolidada sostiene su red visualmente.
+          const hubWidth = Math.max(edgeWidth(data.srs?.[s.id]), edgeWidth(data.srs?.[t.id]));
+          if (hubWidth > 1.2 && (lit || partiallyLit)) thick = Math.max(thick, hubWidth);
           return (
             <line
               key={i}
@@ -2990,6 +3026,15 @@ export default function VocabGraph() {
                               const id = w.toLowerCase().replace(/\s+/g, "-");
                               if (!nodes[id] || nodes[id].cat !== "custom") continue;
                               for (const e of linkWordToPatterns(nodes[id], userCefr)) {
+                                if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
+                              }
+                            }
+                            // ── AUTO-LINKING (bulk Suggest): 1-3 aristas automáticas por
+                            // palabra nueva hacia lo más afín del mapa (0 tokens) ──
+                            for (const w of words) {
+                              const id = w.toLowerCase().replace(/\s+/g, "-");
+                              if (!nodes[id]) continue;
+                              for (const e of autoLinkNewWord(nodes[id], nodes, newEdges, 3)) {
                                 if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
                               }
                             }
