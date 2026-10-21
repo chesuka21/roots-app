@@ -20,7 +20,7 @@ import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUs
 import { callClaudeJson } from "./lib/ai.js";
 import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 import WordToken from "./components/WordToken.jsx";
-import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase } from "./lib/edgeEngine.js";
+import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase, aiSuggestConnections } from "./lib/edgeEngine.js";
 import VocabularyTable from "./components/VocabularyTable.jsx";
 import { Table2 } from "lucide-react";
 
@@ -1230,11 +1230,18 @@ export default function VocabGraph() {
 
   /* (re)build simulation whenever the node/edge SET changes (not on every drag tick) */
   const nodeCountRef = useRef(0);
+  const edgeCountRef = useRef(0); // FIX: aristas nuevas entre nodos existentes (auto-linking, maturity) también deben re-dibujarse
   useEffect(() => {
     if (!data) return;
     const ids = Object.keys(data.nodes);
-    if (simRef.current && ids.length === nodeCountRef.current) return; // same graph shape, skip rebuild
+    const edgeIds = data.edges.length;
+    // mismo node count Y mismas aristas → skip. Si solo cambian edges (auto-link,
+    // maturity links, edición de conexiones), re-hacemos el linkData SIN resetear
+    // las posiciones físicas (rebuild suave, sin saltos).
+    if (simRef.current && ids.length === nodeCountRef.current && edgeIds === edgeCountRef.current) return;
+    const onlyEdgesChanged = simRef.current && ids.length === nodeCountRef.current && edgeIds !== edgeCountRef.current;
     nodeCountRef.current = ids.length;
+    edgeCountRef.current = edgeIds;
 
     const w = dimsRef.current.w, h = dimsRef.current.h;
     const prevPos = {};
@@ -1277,6 +1284,17 @@ export default function VocabGraph() {
       .force("collide", d3.forceCollide(30))
       .alphaDecay(0.02)
       .on("tick", () => forceTick((n) => n + 1));
+
+    // Si solo cambiaron aristas (mismos nodos), no reiniciamos la física desde
+    // cero: restauramos posiciones y reactivamos con alpha bajo para que los
+    // enlaces nuevos "cuelguen" suavemente sin sacudir el mapa.
+    if (onlyEdgesChanged && prevPos && Object.keys(prevPos).length) {
+      nodeData.forEach((n) => {
+        const p = prevPos[n.id];
+        if (p && p.x != null) { n.x = p.x; n.y = p.y; }
+      });
+      try { sim.alpha(0.35); } catch (e) {}
+    }
 
     simRef.current = { sim, nodeData, linkData };
   }, [data]);
@@ -1362,11 +1380,29 @@ export default function VocabGraph() {
           setData((prev) => {
             const today = todayKey();
             const prevCount = prev.reviewedToday?.date === today ? prev.reviewedToday.count : 0;
+            // ── SRS MATURITY LINKS por grade individual ──
+            // Si la palabra CRUZA un umbral de madurez (llega a 4 o a 8 repasos),
+            // evoluciona su red AL INSTANTE: conexiones secundarias (4) o hub
+            // con puentes a otros clusters (8), con grosor visual mayor.
+            let edges = prev.edges;
+            const prevReps = prevSrs.reps || 0;
+            const crossed = (prevReps < 4 && updated.reps >= 4) || (prevReps < 8 && updated.reps >= 8);
+            if (crossed) {
+              try {
+                const { added } = recalculateEdgesFor(id, { ...prev, srs: { ...prev.srs, [id]: updated } }, 2);
+                for (const e of added) {
+                  if (!edges.some((x) => (x.source === e.source && x.target === e.target) || (x.source === e.target && x.target === e.source))) {
+                    edges = [...edges, e];
+                  }
+                }
+              } catch (e) { /* la evolución nunca debe romper el grade */ }
+            }
             return {
               ...prev,
               srs: { ...prev.srs, [id]: updated },
               reviewedToday: { date: today, count: prevCount + 1 },
               progression: grantXp(prev, gain),
+              ...(edges !== prev.edges ? { edges } : {}),
             };
           });
           return updated;
@@ -1679,7 +1715,7 @@ export default function VocabGraph() {
     return () => svg.removeEventListener("wheel", onWheel);
   }, [loaded]);
 
-  const submitAdd = () => {
+  const submitAdd = async () => {
     if (!form.word.trim() || !form.def.trim()) return;
     const id = form.word.trim().toLowerCase().replace(/\s+/g, "-");
     setData((prev) => {
@@ -1719,6 +1755,32 @@ export default function VocabGraph() {
       }
       return { ...prev, nodes, edges: [...prev.edges, ...newEdges] };
     });
+    // ── FALLBACK IA del auto-linking: si la heurística local dejó 0 aristas
+    // palabra↔palabra (palabra abstracta/poco afín), Gemini propone 1-3 enlaces
+    // semánticos y se insertan directo en edges (sync a Supabase automática).
+    try {
+      const fresh = data.edges.filter((e) => (e.source === id || e.target === id) && data.nodes[e.source]?.kind !== "pattern" && data.nodes[e.target]?.kind !== "pattern");
+      const otherWords = Object.values(data.nodes).filter((n) => n && n.id !== id && n.kind !== "pattern");
+      if (fresh.length === 0 && otherWords.length > 0) {
+        const links = await aiSuggestConnections(id.replace(/-/g, " "), otherWords);
+        const byName = {};
+        otherWords.forEach((n) => (byName[n.en.toLowerCase()] = n.id));
+        const aiEdges = [];
+        for (const l of links) {
+          const targetId = byName[(l.word || "").toLowerCase()];
+          if (!targetId) continue;
+          aiEdges.push({ source: id, target: targetId, sentence: l.sentence || "", rel: "auto-ai" });
+        }
+        if (aiEdges.length) {
+          setData((prev) => {
+            const add = aiEdges.filter((e) => !(prev.edges || []).some((x) => (x.source === e.source && x.target === e.target) || (x.source === e.target && x.target === e.source)));
+            return add.length ? { ...prev, edges: [...(prev.edges || []), ...add] } : prev;
+          });
+          // rebuild suave del grafo para dibujar las aristas IA al instante
+          nodeCountRef.current = -1;
+        }
+      }
+    } catch (e) { /* IA caída/quota — la palabra ya está guardada y visible */ }
     setForm({ word: "", def: "", defEs: "", literal: "", cat: "", pos: "", sentenceFrames: [], connections: [], sentence: "", images: [], imgInput: "", imageSearchQuery: "" });
     setManualLink("");
     resetZoom();
