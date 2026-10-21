@@ -2459,7 +2459,10 @@ export default function VocabGraph() {
           const edgeMinW = 0.15 + edgeDensity * 0.5; // umbral de visibilidad 0.15..0.65
           const adjacentSel = selected ? (s.id === selected || t.id === selected) : false;
           const ifLit = lit; // backbone: siempre
-          const ifPartially = (partiallyLit && (wEdge >= edgeMinW || adjacentSel)) || wEdge >= edgeMinW;
+          // ── Aristas del edge engine (auto/maturity/hub/auto-ai): SIEMPRE visibles
+          // — son conexiones automáticas del sistema, ocultarlas parece un bug.
+          const engineRel = ["auto", "auto-ai", "maturity", "hub"].includes(l.rel);
+          const ifPartially = (partiallyLit && (wEdge >= edgeMinW || adjacentSel || engineRel)) || wEdge >= edgeMinW || engineRel;
           if (!ifLit && !ifPartially) return null;
           // grosor por frecuencia de repaso: 0.8..2.6 según weight
           let thick = 0.8 + Math.min(1, Math.max(0, (wEdge - 0.3) / 0.7)) * 1.8;
