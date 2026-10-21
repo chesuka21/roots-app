@@ -185,6 +185,12 @@ export const TRANSLATIONS = {
     "tu mapa se guarda en la nube automáticamente.": "your map is saved to the cloud automatically.",
     "Sin sesión — tu progreso vive solo en este navegador. Inicia sesión para sincronizarlo.": "No session — your progress lives only in this browser. Sign in to sync it.",
     "Escribe la estructura con ____ para cada hueco. Guarda la traducción si quieres.": "Write the structure with ____ for each gap. Save the translation if you want.",
+    "Descargar todas las palabras en CSV": "Download all words as CSV",
+    "Importar": "Import",
+    "Importar palabras desde CSV": "Import words from CSV",
+    "Importadas": "Imported",
+    "palabras": "words",
+    "omitidas (duplicadas o inválidas)": "skipped (duplicates or invalid)",
   },
   es: {
     // — navegación —
@@ -361,6 +367,12 @@ export const TRANSLATIONS = {
     "Marca las palabras a conectar:": "Marca las palabras a conectar:",
     "Conexiones actualizadas — sync a la nube en curso": "Conexiones actualizadas — sync a la nube en curso",
     "Los cambios en la tabla actualizan el mapa al instante y se sincronizan con la nube.": "Los cambios en la tabla actualizan el mapa al instante y se sincronizan con la nube.",
+    "Descargar todas las palabras en CSV": "Descargar todas las palabras en CSV",
+    "Importar": "Importar",
+    "Importar palabras desde CSV": "Importar palabras desde CSV",
+    "Importadas": "Importadas",
+    "palabras": "palabras",
+    "omitidas (duplicadas o inválidas)": "omitidas (duplicadas o inválidas)",
   },
   fr: {
     // — navigation —
@@ -537,6 +549,12 @@ export const TRANSLATIONS = {
     "Marca las palabras a conectar:": "Coche les mots à connecter :",
     "Conexiones actualizadas — sync a la nube en curso": "Connexions mises à jour — synchro cloud en cours",
     "Los cambios en la tabla actualizan el mapa al instante y se sincronizan con la nube.": "Les changements dans la table mettent à jour la carte instantanément et se synchronisent avec le cloud.",
+    "Descargar todas las palabras en CSV": "Télécharger tous les mots en CSV",
+    "Importar": "Importer",
+    "Importar palabras desde CSV": "Importer des mots depuis CSV",
+    "Importadas": "Importées",
+    "palabras": "mots",
+    "omitidas (duplicadas o inválidas)": "ignorés (doublons ou invalides)",
   },
   de: {
     // — Navigation —
@@ -713,6 +731,12 @@ export const TRANSLATIONS = {
     "Marca las palabras a conectar:": "Wähle die zu verbindenden Wörter:",
     "Conexiones actualizadas — sync a la nube en curso": "Verbindungen aktualisiert — Cloud-Sync läuft",
     "Los cambios en la tabla actualizan el mapa al instante y se sincronizan con la nube.": "Änderungen in der Tabelle aktualisieren die Karte sofort und werden mit der Cloud synchronisiert.",
+    "Descargar todas las palabras en CSV": "Alle Wörter als CSV herunterladen",
+    "Importar": "Importieren",
+    "Importar palabras desde CSV": "Wörter aus CSV importieren",
+    "Importadas": "Importiert",
+    "palabras": "Wörter",
+    "omitidas (duplicadas o inválidas)": "übersprungen (Duplikate oder ungültig)",
   },
   pt: {
     // — navegação —
@@ -889,6 +913,12 @@ export const TRANSLATIONS = {
     "Marca las palabras a conectar:": "Marque as palavras para conectar:",
     "Conexiones actualizadas — sync a la nube en curso": "Conexões atualizadas — sync na nuvem em andamento",
     "Los cambios en la tabla actualizan el mapa al instante y se sincronizan con la nube.": "As mudanças na tabela atualizam o mapa instantaneamente e sincronizam com a nuvem.",
+    "Descargar todas las palabras en CSV": "Baixar todas as palavras em CSV",
+    "Importar": "Importar",
+    "Importar palabras desde CSV": "Importar palavras de CSV",
+    "Importadas": "Importadas",
+    "palabras": "palavras",
+    "omitidas (duplicadas o inválidas)": "omitidas (duplicadas ou inválidas)",
   },
 };
 

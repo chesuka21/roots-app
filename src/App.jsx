@@ -616,7 +616,10 @@ const PATTERNS = [
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_REVIEW_CAP = 20; // like Anki's daily limit — keeps a big backlog from turning into 100 cards in one sitting
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  // FECHA LOCAL (no UTC): toISOString() usa UTC y en UTC-5 la "fecha" cambia a
+  // las 7pm — un usuario que practica a las 8pm vería su racha rota. Local fix.
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function initSrs() {
   return { interval: 1, ease: 2.5, reps: 0, due: Date.now() + DAY_MS };
@@ -667,23 +670,49 @@ function levelProgress(xp, level) {
   return Math.min(1, Math.max(0, span > 0 ? intoLevel / span : 0));
 }
 
-// Actualiza la racha: +1 si retomás hoy o si ayer practicaste; se rompe si hay un hueco.
+// Actualiza la racha según daysDifference entre last_active_date y hoy:
+// 0 → sin cambios · 1 → +1 · >1 (saltó días) → reset a 1.
 function bumpStreak(prog) {
   const today = todayKey();
   const last = prog.streak?.lastActive;
+  const diff = daysBetween(last, today);
   let current = prog.streak?.current || 0;
-  if (last === today) {
-    // ya registrado hoy — no sube de nuevo
-  } else if (last === yesterKey()) {
+  if (diff === 0) {
+    // ya registrado hoy — la racha se mantiene sin cambios
+  } else if (diff === 1) {
     current += 1;
   } else {
+    // diff > 1 (o last inválido/nulo): se saltó uno o más días → reinicio
     current = 1;
   }
   const best = Math.max(prog.streak?.best || 0, current);
   return { ...prog, streak: { current, best, lastActive: today } };
 }
+/* Días calendario entre dos claves "YYYY-MM-DD" (null/inválido → Infinity). */
+function daysBetween(fromKey, toKey) {
+  if (!fromKey || !/^\d{4}-\d{2}-\d{2}$/.test(fromKey)) return Infinity;
+  const [fy, fm, fd] = fromKey.split("-").map(Number);
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  const from = new Date(fy, fm - 1, fd);
+  const to = new Date(ty, tm - 1, td);
+  return Math.round((to - from) / DAY_MS);
+}
 function yesterKey() {
-  return new Date(Date.now() - DAY_MS).toISOString().slice(0, 10);
+  const d = new Date(Date.now() - DAY_MS);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* RE-EVALUACIÓN DE RACHA AL CARGAR (login / pullAllFromCloud / arranque):
+   Si el usuario volvió tras 1+ días de ausencia, la racha guardada está
+   "stale" (mostraba el valor viejo). Esta normalización aplica la regla
+   daysDifference SIN exigir práctica hoy: diff==1 mantiene (aún puede
+   continuar), diff>1 resetea a 0. Se ejecuta una vez por carga de app. */
+function normalizeStreakOnLoad(prog) {
+  if (!prog?.streak?.current) return prog;
+  const diff = daysBetween(prog.streak.lastActive, todayKey());
+  if (diff === 0 || diff === 1) return prog; // hoy o ayer — sigue válida
+  // hueco >1 día: la racha guardada ya está muerta → reset a 0 (practicar hoy la sube a 1 vía bumpStreak)
+  return { ...prog, streak: { ...prog.streak, current: 0, lastActive: prog.streak.lastActive } };
 }
 
 // Multiplicador por nivel de inglés del usuario (auto-reporte): los avanzados
@@ -1087,6 +1116,9 @@ export default function VocabGraph() {
                   // Migración legacy: datos guardados antes del sistema de progresión
                   // no tienen `progression` — se inicializa en fresco sin tocar lo demás.
                   if (!initial.progression) initial.progression = initProgression();
+                  // STREAK RESET al cargar: si el usuario volvió tras 1+ días sin
+                  // practicar, la racha guardada se normaliza (diff>1 → 0).
+                  initial.progression = normalizeStreakOnLoad(initial.progression);
                   // Migración Pattern Nodes: inyectar los nodos de patrones y la
                   // clave `cefr` en datos viejos sin romper lo ya guardado.
                   initial.nodes = ensurePatternNodes(initial.nodes);
@@ -1166,8 +1198,9 @@ export default function VocabGraph() {
         ...(prof.target_language ? { targetLanguage: prof.target_language } : {}),
         // Gamificación desde la nube: XP/racha/progresión restaurados al iniciar
         // sesión (si el remoto es más reciente que el local — mayor XP gana).
+        // STREAK RESET: la racha del remoto se normaliza también (diff>1 → 0).
         ...(prof.progression && (prof.progression.xp || 0) > ((prev.progression?.xp) || 0)
-          ? { progression: prof.progression }
+          ? { progression: normalizeStreakOnLoad(prof.progression) }
           : {}),
         ...(prof.onboarded ? { onboarded: true } : {}), // onboarded=false → onboarding reaparece
       }));

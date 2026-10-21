@@ -7,13 +7,14 @@
    FASE SRS de cada fila (del edgeEngine):
    initial (0-3 reps) · intermediate (4-7) · advanced/hub (8+).            */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import {
   Table2, Search, Filter, Eye, Link2, X, Check, ChevronUp, ChevronDown,
-  Unlink, MousePointerClick,
+  Unlink, MousePointerClick, Download, Upload, Loader2,
 } from "lucide-react";
 import { cefrIndex, CEFR_ORDER } from "../data/patterns-cefr.js";
-import { maturityPhase, edgeWidth } from "../lib/edgeEngine.js";
+import { maturityPhase, edgeWidth, autoLinkNewWord } from "../lib/edgeEngine.js";
+import { lookupLocalWord, verbForms } from "../data/wordbank.js";
 
 /* Colores por partOfSpeech (misma paleta del grafo) */
 const POS_LABEL = {
@@ -123,6 +124,116 @@ export default function VocabularyTable({ data, setData, styles, t = (k) => k, o
   const posOptions = [...new Set(Object.values(data.nodes || {}).filter((n) => n?.pos).map((n) => n.pos))];
   const isolatedCount = Object.values(data.nodes || {}).filter((n) => n && n.kind !== "pattern" && n.en && (connIndex[n.id]?.size || 0) === 0).length;
 
+  /* ── EXPORTAR CSV: todas las palabras del mapa ── */
+  const exportCsv = () => {
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = "word,partOfSpeech,cefr,definition,connections_count,srs_stage,learned_date";
+    const lines = Object.values(data.nodes || {})
+      .filter((n) => n && n.kind !== "pattern" && n.en)
+      .map((n) => {
+        const card = data.srs?.[n.id];
+        const stage = maturityPhase(card);
+        const conns = connIndex[n.id]?.size || 0;
+        const learnedDate = n.addedAt ? new Date(n.addedAt).toISOString().slice(0, 10) : "";
+        return [n.en, POS_LABEL[n.pos] || n.pos || "", n.cefr || "", n.def || "", conns, stage, learnedDate].map(esc).join(",");
+      });
+    const csv = "\uFEFF" + header + "\n" + lines.join("\n"); // BOM para Excel/Sheets
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `roots-vocabulary-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /* ── IMPORTAR CSV: bulk insert con clasificación local + auto-linking ── */
+  const fileRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState(null); // { ok, added, skipped, words }
+  const parseCsvLine = (line) => {
+    // parser CSV con comillas: "a, b", "c""d" → [a, b, c"d]
+    const out = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') inQ = false;
+        else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === ",") { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  };
+  const importCsv = (file) => {
+    if (!file) return;
+    setImporting(true);
+    setImportMsg(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || "").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+        // detectar y saltar header si la primera línea contiene "word"
+        let rows = lines.map(parseCsvLine);
+        if (rows.length && /word|término|palabra/i.test(rows[0][0] || "")) rows = rows.slice(1);
+        let added = 0, skipped = 0;
+        const importedWords = [];
+        setData((prev) => {
+          const nodes = { ...prev.nodes };
+          const newEdges = [...(prev.edges || [])];
+          const srs = { ...(prev.srs || {}) };
+          const learned = [...(prev.learned || [])];
+          const now = Date.now();
+          for (const r of rows) {
+            const word = (r[0] || "").trim();
+            if (!word || word.length > 40) { skipped++; continue; }
+            const id = word.toLowerCase().replace(/\s+/g, "-");
+            if (nodes[id]) { skipped++; continue; } // ya existe
+            const posRaw = (r[1] || "").trim().toLowerCase();
+            const pos = ["noun","verb","adjective","adverb","phrasal verb","idiom"].find((p) => posRaw.includes(p) || posRaw === POS_LABEL[p]?.toLowerCase()) || null;
+            const cefr = CEFR_ORDER.includes((r[2] || "").trim().toUpperCase()) ? (r[2] || "").trim().toUpperCase() : null;
+            const def = (r[3] || "").trim();
+            // clasificación del banco local si falta def/pos
+            const local = lookupLocalWord(word);
+            nodes[id] = {
+              id, en: word,
+              def: def || local?.def || "",
+              defEs: local?.defEs || "",
+              cat: local?.cat || "custom",
+              pos: pos || local?.posGuess || null,
+              cefr: cefr || undefined,
+              addedAt: now, updatedAt: now,
+              images: [], userExamples: [], standalone: def || word,
+              verbForms: (pos === "verb" || pos === "phrasal verb" || local?.def?.includes?.("to ")) ? verbForms(word) : null,
+            };
+            learned.push(id);
+            if (!srs[id]) srs[id] = { interval: 1, ease: 2.5, reps: 0, due: now + 86400000 };
+            importedWords.push(id);
+            added++;
+          }
+          // auto-linking en lote: 1-3 aristas por palabra nueva hacia lo afín
+          for (const id of importedWords) {
+            for (const e of autoLinkNewWord(nodes[id], nodes, newEdges, 3)) {
+              if (!newEdges.some((x) => (x.source === e.source && x.target === e.target) || (x.source === e.target && x.target === e.source))) {
+                newEdges.push(e);
+              }
+            }
+          }
+          return { ...prev, nodes, edges: newEdges, srs, learned: [...new Set(learned)] };
+        });
+        setImportMsg({ ok: true, added, skipped, total: rows.length });
+      } catch (e) {
+        setImportMsg({ ok: false, error: String(e.message || e) });
+      }
+      setImporting(false);
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div style={styles.section}>
       <h2 style={styles.sectionTitle}>
@@ -159,7 +270,29 @@ export default function VocabularyTable({ data, setData, styles, t = (k) => k, o
         >
           <Unlink size={13} style={{ verticalAlign: "-2px" }} /> {t("Aisladas")} ({isolatedCount})
         </button>
+        <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+          <button style={styles.tab} onClick={exportCsv} title={t("Descargar todas las palabras en CSV")}>
+            <Download size={13} style={{ verticalAlign: "-2px" }} /> CSV
+          </button>
+          <button style={styles.tab} onClick={() => fileRef.current?.click()} disabled={importing} title={t("Importar palabras desde CSV")}>
+            {importing ? <Loader2 size={13} className="spin" style={{ verticalAlign: "-2px" }} /> : <Upload size={13} style={{ verticalAlign: "-2px" }} />} {t("Importar")}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel"
+            style={{ display: "none" }}
+            onChange={(e) => { importCsv(e.target.files?.[0]); e.target.value = ""; }}
+          />
+        </div>
       </div>
+      {importMsg && (
+        <p style={{ ...styles.formHint, color: importMsg.ok ? "#6FBF8B" : "#d98c8c" }}>
+          {importMsg.ok
+            ? `✓ ${t("Importadas")} ${importMsg.added} ${t("palabras")}${importMsg.skipped ? ` · ${importMsg.skipped} ${t("omitidas (duplicadas o inválidas)")}` : ""}`
+            : `⚠ ${importMsg.error}`}
+        </p>
+      )}
 
       {/* ── Tabla ── */}
       <div style={{ overflowX: "auto", border: "1px solid #232d32", borderRadius: 10 }}>
