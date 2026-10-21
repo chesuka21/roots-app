@@ -34,8 +34,7 @@ function affinityScore(a, b) {
   const wa = wordsOf(a), wb = wordsOf(b);
   let overlap = 0;
   for (const w of wa) if (wb.has(w)) overlap++;
-  score += Math.min(1, overlap * 0.5); // hasta +1
-  // mismas categorías hermanas del banco local (food↔drink, etc. no — mismo cat ya cuenta)
+  score += Math.min(1.5, overlap * 0.75); // hasta +1.5 — 1 palabra clave común ya es señal real
   return score;
 }
 
@@ -49,7 +48,7 @@ export function localCandidates(node, nodes, edges, limit = 5) {
   return Object.values(nodes)
     .filter((n) => n && n.id !== node.id && n.kind !== "pattern" && !connected.has(n.id))
     .map((n) => ({ node: n, score: affinityScore(node, n) }))
-    .filter((x) => x.score >= 1.5) // solo afinidad real (misma categoría o overlap)
+    .filter((x) => x.score >= 0.7) // afinidad real: misma categoría (2) o overlap léxico (≥0.75)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((x) => x.node);
