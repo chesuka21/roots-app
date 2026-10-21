@@ -21,6 +21,8 @@ import { callClaudeJson } from "./lib/ai.js";
 import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 import WordToken from "./components/WordToken.jsx";
 import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase } from "./lib/edgeEngine.js";
+import VocabularyTable from "./components/VocabularyTable.jsx";
+import { Table2 } from "lucide-react";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
   "a", "an", "the", "to", "of", "when", "who", "that", "which", "with", "for", "and", "or",
@@ -1533,6 +1535,25 @@ export default function VocabGraph() {
     });
   };
   const resetZoom = () => setTransform({ x: 0, y: 0, k: 1 });
+  // ── Focus desde la Vocabulary Table: centra la cámara en el nodo y lo selecciona ──
+  const focusOnNode = useCallback((nodeId) => {
+    setActiveTab("map");
+    setSelected(nodeId);
+    // dos intentos: la sim puede seguir re-acomodando el nodo tras el cambio de tab
+    const tryFocus = (attempt = 0) => {
+      const nd = simRef.current?.nodeData?.find((n) => n.id === nodeId);
+      if (!nd || nd.x == null) {
+        if (attempt < 10) setTimeout(() => tryFocus(attempt + 1), 120);
+        return;
+      }
+      setTransform((t) => {
+        const k = Math.max(1.2, Math.min(2.2, t.k || 1.2));
+        // centrar el nodo en el anchor (centro del viewBox)
+        return { x: anchor.x - nd.x * k, y: anchor.y - nd.y * k, k };
+      });
+    };
+    setTimeout(() => tryFocus(), 80);
+  }, [setActiveTab, setSelected]);
 
   const onSvgPointerDown = (e) => {
     e.preventDefault(); // stop the browser from starting a native text-selection drag on <text> nodes
@@ -2253,12 +2274,31 @@ export default function VocabGraph() {
                         >
                           <Search size={19} />
                         </button>
+                        <button
+                          style={activeTab === "table" ? styles.railBtnActive : styles.railBtn}
+                          onClick={() => setActiveTab("table")}
+                          title={t("Vocabulary Table")}
+                        >
+                          <Table2 size={19} />
+                        </button>
                       </nav>
                       <div style={styles.contentCol}>
 
       {/* Sentence Lab: práctica libre con corrección + naturalización IA */}
       {activeTab === "lab" && (
         <SentenceLab styles={styles} uiLang={uiLang} />
+      )}
+      {/* Vocabulary Table: vista tipo Excel de todas las palabras del mapa */}
+      {activeTab === "table" && (
+        <VocabularyTable
+          data={data}
+          setData={setData}
+          styles={styles}
+          t={t}
+          onViewInMap={focusOnNode}
+          cloudSyncing={cloudSyncing}
+          cloudError={cloudError}
+        />
       )}
       {activeTab === "map" && (
       <>
