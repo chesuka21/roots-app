@@ -22,6 +22,9 @@ import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 import WordToken from "./components/WordToken.jsx";
 import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase, aiSuggestConnections } from "./lib/edgeEngine.js";
 import VocabularyTable from "./components/VocabularyTable.jsx";
+import LevelUpQuizModal from "./components/LevelUpQuizModal.jsx";
+import { ensureLevelUpCss } from "./components/levelUpFx.js";
+import { milestoneProgress, LEVELUP_BONUS_XP } from "./data/levelMilestones.js";
 import { Table2 } from "lucide-react";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
@@ -1029,6 +1032,8 @@ export default function VocabGraph() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settings, setSettings] = useState(loadVoiceSettings);
     const [showSettings, setShowSettings] = useState(false);
+    // Level Up Progression: modal del examen de certificación CEFR
+    const [showLevelUpQuiz, setShowLevelUpQuiz] = useState(false);
     // ── Supabase Auth: sesión de nube + gate de login (opcional) ──
     const [cloudSession, setCloudSession] = useState(null);
     const [loginSkipped, setLoginSkipped] = useState(false);
@@ -2060,6 +2065,22 @@ export default function VocabGraph() {
                     <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
                       <Zap size={11} style={{ verticalAlign: "-1px" }} /> Lv {xpLevel}
                     </span>
+                    {/* ── LEVEL UP: badge 🎓 cuando los hitos del nivel están cumplidos ── */}
+                    {(() => {
+                      const ms = milestoneProgress(data, data?.cefr || "A1");
+                      if (!ms || !ms.unlocked || !ms.nextLevel) return null;
+                      ensureLevelUpCss();
+                      return (
+                        <button
+                          className="roots-badge-shine"
+                          style={{ ...styles.xpBadge, color: "#d9a441", border: "1px solid #d9a441", background: "rgba(217,164,65,0.1)", cursor: "pointer" }}
+                          onClick={() => setShowLevelUpQuiz(true)}
+                          title={t("Examen a") + " " + ms.nextLevel + " " + t("Disponible")}
+                        >
+                          🎓 {t("Examen a")} {ms.nextLevel}
+                        </button>
+                      );
+                    })()}
                     {/* Supabase: sesión de nube (nube activa/sync/cuenta) */}
                     {cloudSession ? (
                       <span
@@ -2146,6 +2167,46 @@ export default function VocabGraph() {
                 </div>
               )}
 
+              {/* ── LEVEL UP QUIZ: examen de certificación CEFR ── */}
+              {showLevelUpQuiz && (
+                <LevelUpQuizModal
+                  data={data}
+                  styles={styles}
+                  t={t}
+                  uiLang={uiLang}
+                  onClose={() => setShowLevelUpQuiz(false)}
+                  onPass={({ toLevel, bonusXp }) => {
+                    // 1) cefr sube (estado + Supabase via sync) — los generadores de
+                    //    Patterns/Suggest leen data.cefr → contenido nuevo nivel al instante.
+                    // 2) +bonus XP y xpAtLevelStart = XP actual (los hitos del nuevo nivel empiezan en 0).
+                    // 3) re-vincular todas las palabras a los patterns del nuevo nivel.
+                    setData((prev) => {
+                      const nodes = ensurePatternNodes(prev.nodes);
+                      let newEdges = (prev.edges || []).filter((x) => x.rel !== "patternOf");
+                      for (const w of Object.values(nodes)) {
+                        if (w.kind === "pattern") continue;
+                        for (const e2 of linkWordToPatterns(w, toLevel)) {
+                          if (!newEdges.some((x) => x.source === e2.source && x.target === e2.target)) newEdges.push(e2);
+                        }
+                      }
+                      const progression = { ...(prev.progression || initProgression()) };
+                      const newXp = (progression.xp || 0) + bonusXp;
+                      progression.xp = newXp;
+                      progression.level = levelForXp(newXp);
+                      progression.xpAtLevelStart = newXp; // contador de hitos del nuevo nivel en 0
+                      // etiquetar las palabras existentes sin cefr explícito al nivel logrado
+                      const tagged = { ...nodes };
+                      for (const nid of Object.keys(tagged)) {
+                        if (tagged[nid].kind !== "pattern" && !tagged[nid].cefr) tagged[nid] = { ...tagged[nid], cefr: toLevel };
+                      }
+                      showXpToast(bonusXp);
+                      return { ...prev, cefr: toLevel, level: toLevel, nodes: tagged, edges: newEdges, progression };
+                    });
+                    setShowLevelUpQuiz(false);
+                  }}
+                />
+              )}
+
       {showSettings && (
         <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
           <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
@@ -2212,6 +2273,43 @@ export default function VocabGraph() {
                             <option key={th.id} value={th.id}>{th.name}</option>
                           ))}
                         </select>
+
+                        {/* ── LEVEL UP: progreso de hitos para el próximo nivel ── */}
+                        {(() => {
+                          const ms = milestoneProgress(data, data?.cefr || "A1");
+                          if (!ms || !ms.nextLevel) return null;
+                          ensureLevelUpCss();
+                          const Row = ({ label, have, need, pct }) => (
+                            <div style={{ margin: "6px 0" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8a9490" }}>
+                                <span>{label}</span>
+                                <span style={{ color: pct >= 1 ? "#6FBF8B" : "#8a9490" }}>{Math.min(have, need)}/{need}</span>
+                              </div>
+                              <div style={{ height: 5, background: "#232d32", borderRadius: 3, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${Math.round(pct * 100)}%`, background: pct >= 1 ? "#6FBF8B" : "#D9A441", borderRadius: 3, transition: "width 0.4s ease" }} />
+                              </div>
+                            </div>
+                          );
+                          return (
+                            <div style={{ marginTop: 14, padding: 12, border: "1px solid #2f3b42", borderRadius: 10 }}>
+                              <p style={{ margin: "0 0 8px", fontWeight: 600, color: "#d9a441", fontSize: 13.5 }}>
+                                🎓 {t("Camino a")} {ms.nextLevel}
+                              </p>
+                              <Row label={t("Palabras de tu nivel")} have={ms.words.have} need={ms.words.need} pct={ms.words.pct} />
+                              <Row label={t("XP en este nivel")} have={ms.xp.have} need={ms.xp.need} pct={ms.xp.pct} />
+                              <Row label={t("Palabras dominadas (SRS)")} have={ms.mastered.have} need={ms.mastered.need} pct={ms.mastered.pct} />
+                              {ms.unlocked && (
+                                <button
+                                  className="roots-badge-shine"
+                                  style={{ ...styles.learnBtn, width: "100%", justifyContent: "center", marginTop: 8 }}
+                                  onClick={() => setShowLevelUpQuiz(true)}
+                                >
+                                  🎓 {t("Examen a")} {ms.nextLevel} — {t("Disponible")}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {currentInterests.length > 0 && (
                           <div style={styles.tagCloud}>
