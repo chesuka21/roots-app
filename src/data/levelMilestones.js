@@ -1,29 +1,31 @@
-/* ---------- Level Milestones — requisitos de ascenso CEFR ----------
-   Cada ascenso (A1→A2 … C1→C2) exige 3 hitos acumulados:
-   1. VOCABULARIO:  ≥ N palabras aprendidas ETIQUETADAS al nivel actual o superior
-                    (cefr del nodo ≥ nivel actual).
-   2. XP EN EL NIVEL: ≥ N XP ganados DESDE el último ascenso (xpAtLevelStart).
-   3. MASTERED EN SRS: ≥ N palabras con reps ≥ 8 (fase hub) — dominio real,
-                       no solo haberlas visto.
+/* ---------- Level Milestones — requisitos de ascenso CEFR (tabla estricta) ----------
+   Cada ascenso exige 3 hitos + define el examen del salto:
 
-   Al cumplir los 3, el examen de ascenso se desbloquea. Si se aprueba (≥80%),
-   cefr sube y xpAtLevelStart se resetea al XP actual.                     */
+   Nivel    Palabras   Dominadas   XP total   Examen   Bono
+   A1 → A2     25         10         250       75%     +150
+   A2 → B1     40         20         600       80%     +250
+   B1 → B2     60         35        1200       80%     +400
+   B2 → C1     80         50        2000       85%     +600
+   C1 → C2    100         70        3500       85%    +1000
+
+   "Dominada" = tarjeta SRS con intervalo > 21 días (srs_stage ≥ 4):
+   la memoria a largo plazo ya consolidó la palabra, no solo se la vio.
+
+   Si el examen se falla, el reintento queda bloqueado (levelUpFailLock) hasta
+   completar una sesión adicional de repaso (ver gradeReview/nextReviewCard). */
 
 import { CEFR_ORDER, cefrIndex } from "./patterns-cefr.js";
 
-/* Umbrales por ascenso — indexados por el nivel ACTUAL. El ejemplo del usuario:
-   B2→C1 = 40 palabras B2 + 500 XP del nivel + 15 mastered. Escala progresiva. */
 export const LEVEL_MILESTONES = {
-  A1: { wordsAtLevel: 15, xpAtLevel: 150, mastered: 5 },
-  A2: { wordsAtLevel: 20, xpAtLevel: 250, mastered: 8 },
-  B1: { wordsAtLevel: 30, xpAtLevel: 350, mastered: 10 },
-  B2: { wordsAtLevel: 40, xpAtLevel: 500, mastered: 15 },
-  C1: { wordsAtLevel: 50, xpAtLevel: 700, mastered: 20 },
+  A1: { words: 25, mastered: 10, xp: 250, passScore: 0.75, bonusXp: 150 },
+  A2: { words: 40, mastered: 20, xp: 600, passScore: 0.8, bonusXp: 250 },
+  B1: { words: 60, mastered: 35, xp: 1200, passScore: 0.8, bonusXp: 400 },
+  B2: { words: 80, mastered: 50, xp: 2000, passScore: 0.85, bonusXp: 600 },
+  C1: { words: 100, mastered: 70, xp: 3500, passScore: 0.85, bonusXp: 1000 },
 };
 
-export const LEVELUP_PASS_SCORE = 0.8; // ≥80% aprueba
-export const LEVELUP_BONUS_XP = 200;
 export const LEVELUP_QUIZ_LENGTH = 8;
+export const MASTERED_INTERVAL_DAYS = 21; // intervalo > 21 días = dominada
 
 /* Nivel siguiente en la escalera CEFR (null si ya está en C2). */
 export function nextCefr(cefr) {
@@ -32,42 +34,56 @@ export function nextCefr(cefr) {
   return CEFR_ORDER[i + 1];
 }
 
-/* ¿Cuántas palabras domina el usuario (reps ≥ 8 = fase hub)? */
+/* Palabras dominadas: intervalo SRS > 21 días (memoria consolidada). */
 export function masteredCount(data) {
-  return Object.values(data.srs || {}).filter((c) => (c?.reps || 0) >= 8).length;
+  return Object.values(data.srs || {}).filter((c) => c && (c.interval || 0) > MASTERED_INTERVAL_DAYS).length;
 }
 
-/* Palabras del mapa etiquetadas al nivel actual o superior.
-   Los nodos sin cefr explícito heredan el cefr del usuario (asignado al aprender). */
-export function wordsAtLevelCount(data, cefr) {
-  const min = cefrIndex(cefr);
-  if (min < 0) return 0;
-  return Object.values(data.nodes || {}).filter((n) => {
-    if (!n || n.kind === "pattern" || !n.en) return false;
-    const nodeIdx = cefrIndex(n.cefr || cefr);
-    return nodeIdx >= min;
-  }).length;
+/* Palabras totales del mapa (sin pattern-nodes). */
+export function totalWordsCount(data) {
+  return Object.values(data.nodes || {}).filter((n) => n && n.kind !== "pattern" && n.en).length;
 }
 
-/* XP acumulado desde el último ascenso. */
-export function xpAtLevel(data) {
-  const xp = data.progression?.xp || 0;
-  const start = data.progression?.xpAtLevelStart || 0;
-  return Math.max(0, xp - start);
+/* XP total acumulado. */
+export function totalXp(data) {
+  return data.progression?.xp || 0;
 }
 
-/* Progreso de cada hito (0..1) para pintar barras. */
-export function milestoneProgress(data, cefr) {
+/* ── VALIDADOR PRINCIPAL: ¿el usuario puede presentar el examen? ──
+   Devuelve { eligible, milestonesMet, lock, nextLevel, passScore, bonusXp, progress }
+   o null en C2 (no hay ascenso). progress trae have/need/pct de cada hito. */
+export function checkLevelUpEligibility(data) {
+  const cefr = data?.cefr || "A1";
   const m = LEVEL_MILESTONES[cefr];
-  if (!m) return null;
-  const words = wordsAtLevelCount(data, cefr);
-  const xp = xpAtLevel(data);
+  const next = nextCefr(cefr);
+  if (!m || !next) return null; // C2: no hay ascenso
+
+  const words = totalWordsCount(data);
   const mastered = masteredCount(data);
-  return {
-    words: { have: words, need: m.wordsAtLevel, pct: Math.min(1, words / m.wordsAtLevel) },
-    xp: { have: xp, need: m.xpAtLevel, pct: Math.min(1, xp / m.xpAtLevel) },
-    mastered: { have: mastered, need: m.mastered, pct: Math.min(1, mastered / m.mastered) },
-    unlocked: words >= m.wordsAtLevel && xp >= m.xpAtLevel && mastered >= m.mastered,
-    nextLevel: nextCefr(cefr),
+  const xp = totalXp(data);
+  const pct = (have, need) => (need > 0 ? Math.min(1, have / need) : 1);
+  const progress = {
+    words: { have: words, need: m.words, pct: pct(words, m.words) },
+    mastered: { have: mastered, need: m.mastered, pct: pct(mastered, m.mastered) },
+    xp: { have: xp, need: m.xp, pct: pct(xp, m.xp) },
   };
+  const milestonesMet = words >= m.words && mastered >= m.mastered && xp >= m.xp;
+  const lock = Boolean(data?.levelUpFailLock); // falló el examen → reintento tras repasar
+  return {
+    eligible: milestonesMet && !lock,
+    milestonesMet,
+    lock,
+    nextLevel: next,
+    currentLevel: cefr,
+    passScore: m.passScore,
+    bonusXp: m.bonusXp,
+    progress,
+  };
+}
+
+/* Compatibilidad con la vista de progreso en Ajustes (barras have/need/pct). */
+export function milestoneProgress(data, cefr) {
+  const check = checkLevelUpEligibility({ ...data, cefr: cefr || data?.cefr });
+  if (!check) return null;
+  return { ...check.progress, unlocked: check.eligible, milestonesMet: check.milestonesMet, lock: check.lock, nextLevel: check.nextLevel, passScore: check.passScore, bonusXp: check.bonusXp };
 }

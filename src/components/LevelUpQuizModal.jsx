@@ -1,46 +1,43 @@
 /* ---------- LevelUpQuizModal — examen de certificación CEFR ----------
-   Se desbloquea al cumplir los 3 hitos del nivel actual (levelMilestones.js).
-   8 preguntas mezcladas del nivel ACTUAL y el nivel ASPIRANTE (60/40), con
-   orden aleatorio. ≥80% aprueba: sube `cefr`, +200 XP, confeti, y los
-   generadores (Patterns/Suggest) leen `data.cefr` → contenido del nuevo nivel
-   disponible de inmediato. Fallar no penaliza: se puede repetir otro día. */
+   Se desbloquea al cumplir los 3 hitos del nivel actual (checkLevelUpEligibility).
+   8 preguntas EXCLUSIVAMENTE del nivel objetivo (estructuras + vocabulario del
+   salto), orden aleatorio. El % mínimo lo define la tabla estricta por nivel
+   (75% A2, 80% B1/B2, 85% C1/C2). Instrucciones en native_language (t() +
+   quizQuestionText), preguntas evaluadas en target_language (en inglés).
+   Al aprobar: sube `cefr`, +bonus XP de la tabla, confeti, y los generadores
+   (Patterns/Suggest) leen `data.cefr` → contenido del nuevo nivel al instante.
+   Al fallar: levelUpFailLock — reintento tras completar una sesión de repaso. */
 
 import { useMemo, useState } from "react";
-import { GraduationCap, X, Check, ChevronRight, PartyPopper, Loader2 } from "lucide-react";
+import { GraduationCap, X, Check, ChevronRight, PartyPopper, Loader2, Lock } from "lucide-react";
 import { QUIZ_BANK, quizQuestionText } from "../data/quiz.js";
 import { CEFR_ORDER, cefrIndex } from "../data/patterns-cefr.js";
-import { LEVELUP_PASS_SCORE, LEVELUP_BONUS_XP } from "../data/levelMilestones.js";
 
-export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, onPass, uiLang = "es" }) {
+export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, onPass, uiLang = "es", onFail }) {
   const currentCefr = data?.cefr || "A1";
   const nextIdx = Math.min(CEFR_ORDER.length - 1, cefrIndex(currentCefr) + 1);
   const nextLevel = CEFR_ORDER[nextIdx];
+  // passScore/bonusXp vienen del caller (App los lee de checkLevelUpEligibility)
+  const passScore = data?.levelUp?.passScore ?? 0.8;
+  const bonusXp = data?.levelUp?.bonusXp ?? 200;
   const [stage, setStage] = useState("intro"); // intro | quiz | result
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState(null);
   const [score, setScore] = useState(0);
-  const [done, setDone] = useState(false); // terminó las 8 preguntas
+  const [done, setDone] = useState(false);
 
-  /* ── Selección de preguntas: 5 del nivel objetivo + 3 del actual, mezcladas ── */
+  /* ── Selección: 8 preguntas EXCLUSIVAS del nivel objetivo, orden aleatorio ── */
   const questions = useMemo(() => {
-    const pick = (level, n, exclude) => {
-      const pool = [...(QUIZ_BANK[level] || [])].filter((q) => !exclude.includes(q.q));
-      // shuffle determinista por sesión
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-      }
-      return pool.slice(0, n);
-    };
-    const hard = pick(nextLevel, 5, []);
-    const easy = pick(currentCefr, 3, hard.map((q) => q.q));
-    return [...hard, ...easy]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 8);
-  }, [currentCefr, nextLevel]);
+    const pool = [...(QUIZ_BANK[nextLevel] || [])];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, 8);
+  }, [nextLevel]);
 
   const total = questions.length;
-  const needed = Math.ceil(total * LEVELUP_PASS_SCORE); // 8 → 7 correctas (87.5%) — conservador
+  const needed = Math.max(1, Math.ceil(total * passScore));
   const passed = score >= needed;
 
   const answer = (i) => {
@@ -61,7 +58,12 @@ export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, 
 
   /* Aprobar: el caller actualiza cefr/XP en App (estado + Supabase). */
   const finishPass = () => {
-    onPass({ fromLevel: currentCefr, toLevel: nextLevel, score, total, bonusXp: LEVELUP_BONUS_XP });
+    onPass({ fromLevel: currentCefr, toLevel: nextLevel, score, total, bonusXp });
+  };
+  /* Fallar: activa el lock — el reintento se desbloquea tras una sesión de repaso. */
+  const finishFail = () => {
+    onFail?.({ fromLevel: currentCefr, toLevel: nextLevel, score, total });
+    onClose();
   };
 
   return (
@@ -138,12 +140,12 @@ export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, 
                     {score}/{total} — {t("¡Aprobado!")}
                   </p>
                   <p style={styles.sectionBody}>
-                    {t("Ahora estás en")} <b>{nextLevel}</b>. +{LEVELUP_BONUS_XP} XP
+                    {t("Ahora estás en")} <b>{nextLevel}</b>. +{bonusXp} XP
                   </p>
                 </div>
                 <div style={styles.confettiWrap} aria-hidden="true">
                   {Array.from({ length: 24 }).map((_, i) => (
-                    <span key={i} className="confetti-piece" style={{ left: `${(i * 4.3) % 100}%`, animationDelay: `${(i % 8) * 0.12}s`, background: ["#6FBF8B", "#D9A441", "#8CC9D9", "#C98CC9"][i % 4] }} />
+                    <span key={i} className="roots-confetti-piece" style={{ left: `${(i * 4.3) % 100}%`, animationDelay: `${(i % 8) * 0.12}s`, background: ["#6FBF8B", "#D9A441", "#8CC9D9", "#C98CC9"][i % 4] }} />
                   ))}
                 </div>
                 <button style={styles.learnBtn} onClick={finishPass}>
@@ -157,10 +159,10 @@ export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, 
                     {score}/{total} — {t("Aún no")}
                   </p>
                   <p style={styles.sectionBody}>
-                    {t("Necesitabas")} {needed}/{total}. {t("Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.")}
+                    {t("Necesitabas")} {needed}/{total}. {t("Reintento bloqueado hasta completar una sesión de repaso.")}
                   </p>
                 </div>
-                <button style={styles.tab} onClick={onClose}>
+                <button style={styles.tab} onClick={finishFail}>
                   {t("Cerrar")}
                 </button>
               </>

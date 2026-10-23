@@ -24,7 +24,7 @@ import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase, aiSugge
 import VocabularyTable from "./components/VocabularyTable.jsx";
 import LevelUpQuizModal from "./components/LevelUpQuizModal.jsx";
 import { ensureLevelUpCss } from "./components/levelUpFx.js";
-import { milestoneProgress, LEVELUP_BONUS_XP } from "./data/levelMilestones.js";
+import { milestoneProgress, checkLevelUpEligibility } from "./data/levelMilestones.js";
 import { Table2 } from "lucide-react";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
@@ -1441,6 +1441,10 @@ export default function VocabGraph() {
         // 4-7 reps → conexiones secundarias; 8+ → hub con puentes a otros clusters.
         // Las aristas nuevas suben a Supabase con el sync normal (edges completo).
         try {
+          // ── LEVEL UP: si falló el examen, completar esta ronda desbloquea el reintento ──
+          if (data?.levelUpFailLock) {
+            setData((prev) => ({ ...prev, levelUpFailLock: false }));
+          }
           const gradedIds = reviewQueue.filter((rid) => (data.srs?.[rid]?.reps || 0) > 0);
           setData((prev) => {
             let edges = prev.edges || [];
@@ -2067,8 +2071,8 @@ export default function VocabGraph() {
                     </span>
                     {/* ── LEVEL UP: badge 🎓 cuando los hitos del nivel están cumplidos ── */}
                     {(() => {
-                      const ms = milestoneProgress(data, data?.cefr || "A1");
-                      if (!ms || !ms.unlocked || !ms.nextLevel) return null;
+                      const ms = checkLevelUpEligibility(data);
+                      if (!ms || !ms.eligible || !ms.nextLevel) return null;
                       ensureLevelUpCss();
                       return (
                         <button
@@ -2168,13 +2172,23 @@ export default function VocabGraph() {
               )}
 
               {/* ── LEVEL UP QUIZ: examen de certificación CEFR ── */}
-              {showLevelUpQuiz && (
+              {showLevelUpQuiz && (() => {
+                const elig = checkLevelUpEligibility(data);
+                if (!elig) return null;
+                const levelUp = { passScore: elig.passScore, bonusXp: elig.bonusXp };
+                return (
                 <LevelUpQuizModal
-                  data={data}
+                  data={{ ...data, levelUp }}
                   styles={styles}
                   t={t}
                   uiLang={uiLang}
                   onClose={() => setShowLevelUpQuiz(false)}
+                  onFail={({ toLevel }) => {
+                    // Reintento bloqueado: se desbloquea al completar una sesión de repaso
+                    // (nextReviewCard limpia levelUpFailLock al cerrar la ronda).
+                    setData((prev) => ({ ...prev, levelUpFailLock: true, levelUpFailLevel: toLevel }));
+                    setShowLevelUpQuiz(false);
+                  }}
                   onPass={({ toLevel, bonusXp }) => {
                     // 1) cefr sube (estado + Supabase via sync) — los generadores de
                     //    Patterns/Suggest leen data.cefr → contenido nuevo nivel al instante.
@@ -2200,12 +2214,13 @@ export default function VocabGraph() {
                         if (tagged[nid].kind !== "pattern" && !tagged[nid].cefr) tagged[nid] = { ...tagged[nid], cefr: toLevel };
                       }
                       showXpToast(bonusXp);
-                      return { ...prev, cefr: toLevel, level: toLevel, nodes: tagged, edges: newEdges, progression };
+                      return { ...prev, cefr: toLevel, level: toLevel, nodes: tagged, edges: newEdges, progression, levelUpFailLock: false, levelUpFailLevel: null };
                     });
                     setShowLevelUpQuiz(false);
                   }}
                 />
-              )}
+                );
+              })()}
 
       {showSettings && (
         <div style={styles.modalOverlay} onClick={() => setShowSettings(false)}>
@@ -2296,17 +2311,21 @@ export default function VocabGraph() {
                                 🎓 {t("Camino a")} {ms.nextLevel}
                               </p>
                               <Row label={t("Palabras de tu nivel")} have={ms.words.have} need={ms.words.need} pct={ms.words.pct} />
-                              <Row label={t("XP en este nivel")} have={ms.xp.have} need={ms.xp.need} pct={ms.xp.pct} />
                               <Row label={t("Palabras dominadas (SRS)")} have={ms.mastered.have} need={ms.mastered.need} pct={ms.mastered.pct} />
-                              {ms.unlocked && (
+                              <Row label={t("XP total")} have={ms.xp.have} need={ms.xp.need} pct={ms.xp.pct} />
+                              {ms.lock ? (
+                                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#d98c8c" }}>
+                                  🔒 {t("Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.")}
+                                </p>
+                              ) : ms.unlocked ? (
                                 <button
                                   className="roots-badge-shine"
                                   style={{ ...styles.learnBtn, width: "100%", justifyContent: "center", marginTop: 8 }}
                                   onClick={() => setShowLevelUpQuiz(true)}
                                 >
-                                  🎓 {t("Examen a")} {ms.nextLevel} — {t("Disponible")}
+                                  🎓 {t("Examen a")} {ms.nextLevel} — {t("Disponible")} ({Math.round((ms.passScore || 0.8) * 100)}%)
                                 </button>
-                              )}
+                              ) : null}
                             </div>
                           );
                         })()}

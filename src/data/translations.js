@@ -213,6 +213,9 @@ export const TRANSLATIONS = {
     "Aún no": "Not yet",
     "Necesitabas": "You needed",
     "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.": "Review your words and try again anytime — you lose nothing.",
+    "XP total": "Total XP",
+    "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Retry locked — complete a review session to try again.",
+    "Reintento bloqueado hasta completar una sesión de repaso.": "Retry locked until you complete a review session.",
   },
   es: {
     // — navegación —
@@ -417,6 +420,9 @@ export const TRANSLATIONS = {
     "Aún no": "Aún no",
     "Necesitabas": "Necesitabas",
     "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.": "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.",
+    "XP total": "XP total",
+    "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.",
+    "Reintento bloqueado hasta completar una sesión de repaso.": "Reintento bloqueado hasta completar una sesión de repaso.",
   },
   fr: {
     // — navigation —
@@ -621,6 +627,9 @@ export const TRANSLATIONS = {
     "Aún no": "Pas encore",
     "Necesitabas": "Il te fallait",
     "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.": "Révise tes mots et réessaie quand tu veux — tu ne perds rien.",
+    "XP total": "XP total",
+    "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Nouvelle tentative bloquée — termine une session de révision pour réessayer.",
+    "Reintento bloqueado hasta completar una sesión de repaso.": "Nouvelle tentative bloquée jusqu'à une session de révision.",
   },
   de: {
     // — Navigation —
@@ -825,6 +834,9 @@ export const TRANSLATIONS = {
     "Aún no": "Noch nicht",
     "Necesitabas": "Du brauchtest",
     "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.": "Wiederhole deine Wörter und versuche es jederzeit erneut — du verlierst nichts.",
+    "XP total": "XP gesamt",
+    "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Wiederholung gesperrt — absolviere eine Lernsitzung, um es erneut zu versuchen.",
+    "Reintento bloqueado hasta completar una sesión de repaso.": "Wiederholung gesperrt bis zu einer Lernsitzung.",
   },
   pt: {
     // — navegação —
@@ -1029,6 +1041,9 @@ export const TRANSLATIONS = {
     "Aún no": "Ainda não",
     "Necesitabas": "Você precisava de",
     "Repasa tus palabras y vuelve a intentarlo cuando quieras — no pierdes nada.": "Revise suas palavras e tente novamente quando quiser — você não perde nada.",
+    "XP total": "XP total",
+    "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Tentativa bloqueada — complete uma sessão de revisão para tentar novamente.",
+    "Reintento bloqueado hasta completar una sesión de repaso.": "Tentativa bloqueada até completar uma sessão de revisão.",
   },
 };
 
