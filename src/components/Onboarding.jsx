@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sprout, X, Check, ChevronRight } from "lucide-react";
+import { Sprout, X, Check, ChevronRight, Waves, Layers } from "lucide-react";
 import { SUPPORTED_LANGUAGES, languageLabel } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
 import { QUIZ_LENGTH, SELF_TO_RUNG, nextRung, pickQuizQuestion, quizQuestionText, PRESET_INTERESTS } from "../data/quiz.js";
