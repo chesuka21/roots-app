@@ -25,6 +25,8 @@ import VocabularyTable from "./components/VocabularyTable.jsx";
 import LevelUpQuizModal from "./components/LevelUpQuizModal.jsx";
 import { ensureLevelUpCss } from "./components/levelUpFx.js";
 import { milestoneProgress, checkLevelUpEligibility } from "./data/levelMilestones.js";
+import LanguageSwitcher from "./components/LanguageSwitcher.jsx";
+import { COURSES, courseOf } from "./data/translations.js";
 import { Table2 } from "lucide-react";
 
 const IMAGE_QUERY_STOPWORDS = new Set([
@@ -115,7 +117,7 @@ const VOICES = [
   { id: "en-US-ChristopherNeural", label: "Christopher — hombre, EE.UU. grave" },
   { id: "en-US-EmmaMultilingualNeural", label: "Emma — multilingüe (futura)" },
 ];
-const DEFAULT_SETTINGS = { voice: "en-US-AriaNeural", rate: -5 };
+const DEFAULT_SETTINGS = { voice: null, rate: -5 }; // null = voz automática del curso activo
 function loadVoiceSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -143,11 +145,22 @@ async function playUrl(url) {
   await audio.play();
 }
 
+/* Voz activa por curso: la voz Edge TTS se deriva del target_language activo.
+   Se setea desde App (setActiveCourseVoice) cuando cambia el curso y los
+   speak() la usan si el usuario no eligió una voz manual en Ajustes. */
+let activeCourseVoice = null;
+function setActiveCourseVoice(voice) {
+  activeCourseVoice = voice || null;
+}
+
 async function speak(text, opts = {}) {
   // Orden v2: Edge TTS neural (gratis, natural) → VoiceRSS → navegador.
   // opts: { voice, rate } — si no vienen, se usan los de Ajustes (⚙).
+  // MULTI-CURSO: la voz por defecto es la del idioma objetivo activo
+  // (courseOf(targetLanguage).voice) — el audio se pronuncia en el idioma
+  // que se está aprendiendo, no en el del UI.
   const saved = loadVoiceSettings();
-  const voice = opts.voice || saved.voice;
+  const voice = opts.voice || saved.voice || activeCourseVoice || "en-US-AriaNeural";
   const rate = opts.rate ?? saved.rate;
   const cacheKey = `${voice}|${rate}|${text}`;
   if (audioCache.has(cacheKey)) {
@@ -307,9 +320,10 @@ Rules:
   }
 }
 
-async function generateWordDetails(word, existingWords) {
+async function generateWordDetails(word, existingWords, targetLang = "en") {
   const wordList = existingWords.map((w) => w.en).join(", ");
-  const prompt = `New word: "${word}"
+  const langName = { en: "English", fr: "French", de: "German", it: "Italian", pt: "Portuguese", es: "Spanish" }[targetLang] || "English";
+  const prompt = `The learner is studying ${langName}. New word: "${word}"
 Existing words already in the learner's vocabulary network: ${wordList || "(none yet)"}
 
 Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
@@ -318,13 +332,13 @@ Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape
 Rules:
 - "imageSearchQuery": a visual, CONCRETE, PHYSICAL, photographable scene description in English (3-7 words) that represents the word's meaning — NO text/letters/signs in the scene, no abstract concepts, no motivational graphics. Describe what a camera would actually see: a person doing something, an object in use, a specific place. Examples — "borrow" → "person borrowing a book in library hand close up"; "eager" → "excited child waiting at birthday party"; "reluctant" → "person hesitating at crossroad decision"; "deadline" → "person working late clock pressure desk". This query is sent to a stock-photo search, so favor realistic photography terms.
 - "correctedWord": if "${word}" is a single misspelled word, put the correctly-spelled real word here (e.g. "nephey" → "nephew"). If it's already correct, or if it's a multi-word idiom/expression (like "cost an arm and a leg"), repeat it unchanged — don't try to reduce a phrase down to one dictionary word.
-- "definition": a simple English definition for a beginner English learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
+- "definition": a simple ${langName} definition for a beginner learner, under 14 words, using common everyday words, describing "correctedWord" (not the misspelled input). Write the definition in ${langName} — the language being studied. If "correctedWord" is an idiom or figurative expression, explain what it actually MEANS (the figurative sense), not what the individual words literally say. Do not reuse the word/phrase inside its own definition.
 - "definitionEs": a Spanish translation of that same definition (natural Spanish, not word-for-word).
 - "category": one short lowercase English topic word, like school, food, feelings, work, nature, travel, or health.
 - "partOfSpeech": one of noun, verb, adjective, adverb, phrasal verb, idiom — whichever fits "correctedWord" best.
 - "verbForms": ONLY if partOfSpeech is "verb" (or "phrasal verb") — its inflected forms: past simple (e.g. "ate"), past participle (e.g. "eaten"), gerund/-ing (e.g. "eating"), third-person present (e.g. "eats"). Otherwise omit it entirely.
-- "sentenceFrames": 2 to 4 natural sentence templates where "correctedWord" fits, with ____ marking where OTHER words go (the word itself written out, never as ____). e.g. for "deadline": "The ____ is tomorrow", "We met the ____". "es" is the Spanish translation of the frame. These are map-first patterns: built from THIS word, not generic ones like "I drink [noun]".
-- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural English sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.
+- "sentenceFrames": 2 to 4 natural sentence templates IN ${langName} where "correctedWord" fits, with ____ marking where OTHER words go (the word itself written out, never as ____). e.g. for "deadline": "The ____ is tomorrow", "We met the ____". "es" is the Spanish translation of the frame. These are map-first patterns: built from THIS word, not generic ones like "I drink [noun]".
+- "connections": pick between 2 and 5 words FROM THE EXISTING LIST ABOVE that "correctedWord" is naturally related to in meaning or everyday use — not just words that share a category. A word can relate to ideas from more than one topic (e.g. "shelf" fits both "home" and "school"). The more genuine connections you find, the better — a richly connected network helps the learner review old words while learning new ones. For each connection, write one short natural ${langName} sentence using both "correctedWord" and that existing word together, spelled correctly. Only return fewer than 2 if the existing list is very small or truly nothing relates well.
 - Never use double-quote characters (") inside any value — use single quotes (') if you need to quote a word.`;
 
   return callClaudeJson(prompt, 1000);
@@ -341,7 +355,8 @@ Rules:
   }
 
   // Devuelve { details, fromLocal } donde details tiene la forma esperada por runGenerate.
-  async function generateWordDetailsSmart(word, existingWords) {
+  // MULTI-CURSO: targetLang inyecta el idioma objetivo activo en los prompts de Gemini.
+  async function generateWordDetailsSmart(word, existingWords, targetLang = "en") {
     const local = lookupLocalWord(word);
     const byName = {};
     existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
@@ -368,7 +383,7 @@ Rules:
       };
     }
     // No está en el banco (palabra poco común / técnica) → flujo IA completo.
-    const full = await generateWordDetails(word, existingWords);
+    const full = await generateWordDetails(word, existingWords, targetLang);
     return { fromLocal: false, details: full };
   }
 
@@ -1129,9 +1144,48 @@ export default function VocabGraph() {
                   initial.nodes = ensurePatternNodes(initial.nodes);
                   if (!initial.cefr) initial.cefr = initial.level ? TIER_TO_CEFR[initial.level] || "A2" : null;
                   if (!initial.targetLanguage) initial.targetLanguage = "en";
+                  // ── MIGRACIÓN MULTI-CURSO: courses[] + datos por idioma ──
+                  // Los datos existentes (nodos/aristas/SRS/cefr) pasan a ser del
+                  // curso original (langData[targetLanguage]); el resto de cursos
+                  // arranca vacío. La gamificación (progression) queda GLOBAL.
+                  if (!Array.isArray(initial.courses) || !initial.courses.length) {
+                    initial.courses = [initial.targetLanguage || "en"];
+                  }
+                  if (!initial.langData || typeof initial.langData !== "object") initial.langData = {};
+                  const origLang = initial.targetLanguage || "en";
+                  if (!initial.langData[origLang]) {
+                    initial.langData[origLang] = {
+                      nodes: initial.nodes,
+                      edges: initial.edges || [],
+                      learned: initial.learned || [],
+                      srs: initial.srs || {},
+                      cefr: initial.cefr,
+                      level: initial.level,
+                      onboardedForLang: true, // los datos existentes ya pasaron onboarding
+                      reviewedToday: initial.reviewedToday || null,
+                      patternSrs: initial.patternSrs || {},
+                      patternHistory: initial.patternHistory || {},
+                      patternProgress: initial.patternProgress || {},
+                      customPatterns: initial.customPatterns || [],
+                      suggestedSeen: initial.suggestedSeen || [],
+                    };
+                  }
+                  // Punteros del curso activo → langData activo (compat: App sigue
+                  // leyendo data.nodes/data.edges; el switcher los re-direcciona).
+                  const activeLang = initial.langData[initial.targetLanguage] ? initial.targetLanguage : origLang;
+                  const activeData = initial.langData[activeLang];
+                  initial.nodes = activeData.nodes;
+                  initial.edges = activeData.edges;
+                  initial.learned = activeData.learned;
+                  initial.srs = activeData.srs;
+                  initial.cefr = activeData.cefr;
+                  initial.level = activeData.level;
+                  initial.targetLanguage = activeLang;
                   // Migración del slider de densidad del grafo.
                   if (typeof initial.edgeDensity !== "number") initial.edgeDensity = 0.35;
                   setEdgeDensity(initial.edgeDensity);
+                  // MULTI-CURSO: voz Edge TTS del idioma objetivo activo
+                  setActiveCourseVoice(courseOf(initial.targetLanguage || "en").voice);
                 }
       }
     } catch (e) {
@@ -1211,6 +1265,113 @@ export default function VocabGraph() {
       }));
     }).catch(() => { /* sin pull — el usuario completa el onboarding local */ });
   }, [cloudSession]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── MULTI-CURSO: cambiar de idioma objetivo (estilo Duolingo) ──
+  // Guarda el curso activo en langData, carga (o crea vacío) el destino.
+  // La gamificación (progression, streak) NO se toca: es global.
+  const switchTargetLanguage = (langCode) => {
+    if (!langCode || langCode === data?.targetLanguage) return;
+    setData((prev) => {
+      const courses = prev.courses?.length ? prev.courses : [prev.targetLanguage || "en"];
+      const langData = { ...(prev.langData || {}) };
+      // 1) guardar el estado del curso ACTUAL en langData
+      langData[prev.targetLanguage || "en"] = {
+        nodes: prev.nodes,
+        edges: prev.edges || [],
+        learned: prev.learned || [],
+        srs: prev.srs || {},
+        cefr: prev.cefr,
+        level: prev.level,
+        onboardedForLang: prev.onboardedForLang ?? true,
+        reviewedToday: prev.reviewedToday || null,
+        patternSrs: prev.patternSrs || {},
+        patternHistory: prev.patternHistory || {},
+        patternProgress: prev.patternProgress || {},
+        customPatterns: prev.customPatterns || [],
+        suggestedSeen: prev.suggestedSeen || [],
+      };
+      // 2) cargar el destino (o crear vacío si es nuevo)
+      const coursesNext = courses.includes(langCode) ? courses : [...courses, langCode];
+      const dest = langData[langCode] || {
+        nodes: {}, edges: [], learned: [], srs: {},
+        cefr: null, level: null,
+        onboardedForLang: false, // curso nuevo → quiz de nivelación
+        reviewedToday: null, patternSrs: {}, patternHistory: {}, patternProgress: {},
+        customPatterns: [], suggestedSeen: [],
+      };
+      langData[langCode] = dest;
+      // 3) activar el destino (los punteros raíz apuntan al langData del curso)
+      return {
+        ...prev,
+        courses: coursesNext,
+        targetLanguage: langCode,
+        langData,
+        nodes: dest.nodes || {},
+        edges: dest.edges || [],
+        learned: dest.learned || [],
+        srs: dest.srs || {},
+        cefr: dest.cefr ?? null,
+        level: dest.level ?? null,
+        onboardedForLang: dest.onboardedForLang ?? false,
+        reviewedToday: dest.reviewedToday || null,
+        patternSrs: dest.patternSrs || {},
+        patternHistory: dest.patternHistory || {},
+        patternProgress: dest.patternProgress || {},
+        customPatterns: dest.customPatterns || [],
+        suggestedSeen: dest.suggestedSeen || [],
+        // reset de UI dependiente del curso
+        selected: null,
+        reviewActive: false,
+      };
+    });
+    nodeCountRef.current = -1; // rebuild del grafo con el nuevo curso
+    resetZoom();
+    // MULTI-CURSO: motor de voz del nuevo idioma objetivo (Edge TTS locale)
+    setActiveCourseVoice(courseOf(langCode).voice);
+  };
+
+  // ── MULTI-CURSO: agregar un curso nuevo a la lista (sin cambiar el activo) ──
+  const addTargetCourse = (langCode) => {
+    if (!langCode) return;
+    switchTargetLanguage(langCode); // Duolingo-style: agregar te lleva al curso nuevo
+  };
+
+  // ── MULTI-CURSO: persistir los cambios del curso activo de vuelta a langData ──
+  // (cada setData del curso activo se refleja en langData[targetLanguage] — un solo
+  //  useEffect post-render evita duplicar lógica en cada mutation).
+  useEffect(() => {
+    if (!data || !data.targetLanguage || !data.langData) return;
+    const active = data.langData[data.targetLanguage];
+    if (!active) return;
+    if (
+      active.nodes === data.nodes &&
+      active.edges === data.edges &&
+      active.srs === data.srs &&
+      active.cefr === data.cefr &&
+      active.learned === data.learned
+    ) return; // ya sincronizado (referencias iguales) — skip
+    setData((prev) => {
+      if (!prev.langData || !prev.langData[prev.targetLanguage]) return prev;
+      const ld = { ...prev.langData };
+      ld[prev.targetLanguage] = {
+        ...ld[prev.targetLanguage],
+        nodes: prev.nodes,
+        edges: prev.edges || [],
+        learned: prev.learned || [],
+        srs: prev.srs || {},
+        cefr: prev.cefr,
+        level: prev.level,
+        onboardedForLang: prev.onboardedForLang ?? true,
+        reviewedToday: prev.reviewedToday || null,
+        patternSrs: prev.patternSrs || {},
+        patternHistory: prev.patternHistory || {},
+        patternProgress: prev.patternProgress || {},
+        customPatterns: prev.customPatterns || [],
+        suggestedSeen: prev.suggestedSeen || [],
+      };
+      return { ...prev, langData: ld };
+    });
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync a la nube (debounced por los propios cambios de data): solo con sesión
   useEffect(() => {
@@ -1810,7 +1971,7 @@ export default function VocabGraph() {
         let generatedFrames = [];
         let generatedImageQuery = "";
         try {
-          const { fromLocal, details } = await generateWordDetailsSmart(form.word.trim(), existingWords);
+          const { fromLocal, details } = await generateWordDetailsSmart(form.word.trim(), existingWords, data.targetLanguage || "en");
           const byName = {};
           existingWords.forEach((w) => (byName[w.en.toLowerCase()] = w.id));
           const spellFixed = details.correctedWord && details.correctedWord.toLowerCase() !== form.word.trim().toLowerCase();
@@ -1925,6 +2086,39 @@ export default function VocabGraph() {
         t={t}
         onSkip={() => setLoginSkipped(true)}
         onDone={() => setLoginSkipped(true)}
+      />
+    );
+  }
+
+  // ── MULTI-CURSO: nivelación del idioma recién agregado ──
+  // Un curso nuevo (onboardedForLang=false) lanza el quiz de nivelación de ese
+  // idioma (el perfil general ya está onboarded — solo falta el CEFR del curso).
+  const langQuizActive = data.onboarded && data.onboardedForLang === false;
+  if (langQuizActive) {
+    return (
+      <Onboarding
+        styles={styles}
+        t={t}
+        uiLang={uiLang}
+        onNativeLangChange={(lang) => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: lang } }))}
+        onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
+          // Solo el CEFR del curso nuevo — el perfil global ya existe.
+          const cefrFinal = cefr || TIER_TO_CEFR[level] || "A2";
+          const langData = { ...(prev.langData || {}) };
+          langData[prev.targetLanguage] = {
+            ...(langData[prev.targetLanguage] || {}),
+            cefr: cefrFinal,
+            level: cefrFinal,
+            onboardedForLang: true,
+          };
+          return {
+            ...prev,
+            cefr: cefrFinal,
+            level: cefrFinal,
+            onboardedForLang: true,
+            langData,
+          };
+        })}
       />
     );
   }
@@ -2059,9 +2253,19 @@ export default function VocabGraph() {
           </div>
         </div>
         <div style={styles.progress}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* ── LanguageSwitcher: selector de curso activo (multi-idioma) ── */}
+                  <LanguageSwitcher
+                    data={data}
+                    styles={styles}
+                    t={t}
+                    onSelect={switchTargetLanguage}
+                    onAddCourse={addTargetCourse}
+                  />
                   <button style={styles.gearBtn} onClick={() => setShowSettings(true)} title="Ajustes de voz">
                     <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
                   </button>
+                  </div>
                   <div style={styles.gamifyRow}>
                                       <span style={streakDead ? styles.streakBadgeDead : streakAtRisk ? styles.streakBadgeRisk : styles.streakBadge} title={(streakDead ? `Perdiste tu racha de ${streakCurrent} días. Mejor: ${streakBest}.` : `Racha actual ${streakCurrent} días · mejor ${streakBest}`)}>
                                         <Flame size={11} style={{ verticalAlign: "-1px" }} /> {streakCurrent}

@@ -216,6 +216,9 @@ export const TRANSLATIONS = {
     "XP total": "Total XP",
     "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Retry locked — complete a review session to try again.",
     "Reintento bloqueado hasta completar una sesión de repaso.": "Retry locked until you complete a review session.",
+    "Cambiar idioma de estudio": "Switch study language",
+    "Mis cursos": "My courses",
+    "Agregar curso": "Add a course",
   },
   es: {
     // — navegación —
@@ -423,6 +426,9 @@ export const TRANSLATIONS = {
     "XP total": "XP total",
     "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.",
     "Reintento bloqueado hasta completar una sesión de repaso.": "Reintento bloqueado hasta completar una sesión de repaso.",
+    "Cambiar idioma de estudio": "Cambiar idioma de estudio",
+    "Mis cursos": "Mis cursos",
+    "Agregar curso": "Agregar curso",
   },
   fr: {
     // — navigation —
@@ -630,6 +636,9 @@ export const TRANSLATIONS = {
     "XP total": "XP total",
     "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Nouvelle tentative bloquée — termine une session de révision pour réessayer.",
     "Reintento bloqueado hasta completar una sesión de repaso.": "Nouvelle tentative bloquée jusqu'à une session de révision.",
+    "Cambiar idioma de estudio": "Changer la langue d'étude",
+    "Mis cursos": "Mes cours",
+    "Agregar curso": "Ajouter un cours",
   },
   de: {
     // — Navigation —
@@ -837,6 +846,9 @@ export const TRANSLATIONS = {
     "XP total": "XP gesamt",
     "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Wiederholung gesperrt — absolviere eine Lernsitzung, um es erneut zu versuchen.",
     "Reintento bloqueado hasta completar una sesión de repaso.": "Wiederholung gesperrt bis zu einer Lernsitzung.",
+    "Cambiar idioma de estudio": "Lernsprache wechseln",
+    "Mis cursos": "Meine Kurse",
+    "Agregar curso": "Kurs hinzufügen",
   },
   pt: {
     // — navegação —
@@ -1044,11 +1056,32 @@ export const TRANSLATIONS = {
     "XP total": "XP total",
     "Reintento bloqueado — completa una sesión de repaso para volver a intentarlo.": "Tentativa bloqueada — complete uma sessão de revisão para tentar novamente.",
     "Reintento bloqueado hasta completar una sesión de repaso.": "Tentativa bloqueada até completar uma sessão de revisão.",
+    "Cambiar idioma de estudio": "Mudar idioma de estudo",
+    "Mis cursos": "Meus cursos",
+    "Agregar curso": "Adicionar curso",
   },
 };
 
 // Idiomas soportados (native_language)
 export const SUPPORTED_LANGUAGES = ["en", "es", "fr", "de", "pt"];
+
+/* ── CURSOS multi-idioma (target_language) — estilo Duolingo ──
+   Cada curso: bandera, label, voz Edge TTS (locale nativo) y locale de voz.
+   El usuario puede tener varios cursos activos en el MISMO perfil; la
+   gamificación (racha/XP) es global, los datos (nodos/aristas/SRS) se
+   aíslan por target_language. */
+export const COURSES = [
+  { code: "en", flag: "🇬🇧", label: "English", voice: "en-US-AriaNeural" },
+  { code: "fr", flag: "🇫🇷", label: "Français", voice: "fr-FR-DeniseNeural" },
+  { code: "de", flag: "🇩🇪", label: "Deutsch", voice: "de-DE-KatjaNeural" },
+  { code: "it", flag: "🇮🇹", label: "Italiano", voice: "it-IT-ElsaNeural" },
+  { code: "pt", flag: "🇵🇹", label: "Português", voice: "pt-PT-FernandaNeural" },
+  { code: "es", flag: "🇪🇸", label: "Español", voice: "es-ES-ElviraNeural" },
+];
+
+export function courseOf(code) {
+  return COURSES.find((c) => c.code === code) || COURSES[0];
+}
 
 // Traduce una clave al idioma dado. Fallback: inglés → la clave misma.
 export function translate(key, lang) {
