@@ -26,6 +26,7 @@ import LevelUpQuizModal from "./components/LevelUpQuizModal.jsx";
 import { ensureLevelUpCss } from "./components/levelUpFx.js";
 import { milestoneProgress, checkLevelUpEligibility } from "./data/levelMilestones.js";
 import LanguageSwitcher from "./components/LanguageSwitcher.jsx";
+import AddLanguageModal from "./components/AddLanguageModal.jsx";
 import { COURSES, courseOf } from "./data/translations.js";
 import { Table2 } from "lucide-react";
 
@@ -1049,6 +1050,8 @@ export default function VocabGraph() {
     const [showSettings, setShowSettings] = useState(false);
     // Level Up Progression: modal del examen de certificación CEFR
     const [showLevelUpQuiz, setShowLevelUpQuiz] = useState(false);
+    // Multi-curso: modal corto "agregar idioma" (sin repetir perfil)
+    const [showAddLang, setShowAddLang] = useState(false);
     // ── Supabase Auth: sesión de nube + gate de login (opcional) ──
     const [cloudSession, setCloudSession] = useState(null);
     const [loginSkipped, setLoginSkipped] = useState(false);
@@ -1266,11 +1269,13 @@ export default function VocabGraph() {
     }).catch(() => { /* sin pull — el usuario completa el onboarding local */ });
   }, [cloudSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── MULTI-CURSO: cambiar de idioma objetivo (estilo Duolingo) ──
+  // ── MULTI-CURSO: activar un idioma objetivo (con CEFR inicial opcional) ──
   // Guarda el curso activo en langData, carga (o crea vacío) el destino.
   // La gamificación (progression, streak) NO se toca: es global.
-  const switchTargetLanguage = (langCode) => {
-    if (!langCode || langCode === data?.targetLanguage) return;
+  // initialCefr viene del AddLanguageModal (nivel elegido o test de ubicación);
+  // null = el curso destino ya existía (conserva su CEFR).
+  const switchTargetLanguage = (langCode, initialCefr = null) => {
+    if (!langCode) return;
     setData((prev) => {
       const courses = prev.courses?.length ? prev.courses : [prev.targetLanguage || "en"];
       const langData = { ...(prev.langData || {}) };
@@ -1294,11 +1299,18 @@ export default function VocabGraph() {
       const coursesNext = courses.includes(langCode) ? courses : [...courses, langCode];
       const dest = langData[langCode] || {
         nodes: {}, edges: [], learned: [], srs: {},
-        cefr: null, level: null,
-        onboardedForLang: false, // curso nuevo → quiz de nivelación
+        cefr: initialCefr, level: initialCefr,
+        // nivel elegido explícitamente → sin quiz de nivelación;
+        // null → onboardedForLang false lanzará la nivelación (flujo previo)
+        onboardedForLang: Boolean(initialCefr),
         reviewedToday: null, patternSrs: {}, patternHistory: {}, patternProgress: {},
         customPatterns: [], suggestedSeen: [],
       };
+      if (initialCefr && !dest.cefr) {
+        dest.cefr = initialCefr;
+        dest.level = initialCefr;
+        dest.onboardedForLang = true;
+      }
       langData[langCode] = dest;
       // 3) activar el destino (los punteros raíz apuntan al langData del curso)
       return {
@@ -1330,10 +1342,10 @@ export default function VocabGraph() {
     setActiveCourseVoice(courseOf(langCode).voice);
   };
 
-  // ── MULTI-CURSO: agregar un curso nuevo a la lista (sin cambiar el activo) ──
+  // ── MULTI-CURSO: modal corto de "agregar idioma" (2 pasos, sin repetir perfil) ──
   const addTargetCourse = (langCode) => {
     if (!langCode) return;
-    switchTargetLanguage(langCode); // Duolingo-style: agregar te lleva al curso nuevo
+    setShowAddLang(true);
   };
 
   // ── MULTI-CURSO: persistir los cambios del curso activo de vuelta a langData ──
@@ -2375,9 +2387,25 @@ export default function VocabGraph() {
                 </div>
               )}
 
+              {/* ── ADD LANGUAGE: modal corto de 2 pasos (sin repetir perfil) ── */}
+              {showAddLang && (
+                <AddLanguageModal
+                  data={data}
+                  styles={styles}
+                  t={t}
+                  uiLang={uiLang}
+                  onClose={() => setShowAddLang(false)}
+                  onConfirm={({ langCode, cefr }) => {
+                    // Activa el curso con el CEFR elegido/testeado — sin onboarding repetido
+                    switchTargetLanguage(langCode, cefr);
+                    setShowAddLang(false);
+                    setActiveTab("map");
+                  }}
+                />
+              )}
+
               {/* ── LEVEL UP QUIZ: examen de certificación CEFR ── */}
-              {showLevelUpQuiz && (() => {
-                const elig = checkLevelUpEligibility(data);
+              {showLevelUpQuiz && (() => {                const elig = checkLevelUpEligibility(data);
                 if (!elig) return null;
                 const levelUp = { passScore: elig.passScore, bonusXp: elig.bonusXp };
                 return (
@@ -2492,6 +2520,62 @@ export default function VocabGraph() {
                             <option key={th.id} value={th.id}>{th.name}</option>
                           ))}
                         </select>
+
+                        {/* ── MULTI-CURSO: panel "Mis Cursos de Idiomas" ── */}
+                        {(() => {
+                          const courses = data.courses?.length ? data.courses : [data.targetLanguage || "en"];
+                          const langData = data.langData || {};
+                          const active = data.targetLanguage || "en";
+                          return (
+                            <div style={{ marginTop: 16 }}>
+                              <label style={styles.label}>{t("Mis Cursos de Idiomas")}</label>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                {courses.map((code) => {
+                                  const c = courseOf(code);
+                                  const ld = langData[code] || {};
+                                  const wordCount = ld.nodes ? Object.values(ld.nodes).filter((n) => n && n.kind !== "pattern").length : 0;
+                                  const isActive = code === active;
+                                  return (
+                                    <div
+                                      key={code}
+                                      style={{
+                                        border: isActive ? "1px solid #6FBF8B" : "1px solid #2f3b42",
+                                        background: isActive ? "rgba(111,191,139,0.08)" : "rgba(255,255,255,0.02)",
+                                        borderRadius: 10, padding: "10px 12px", position: "relative",
+                                      }}
+                                    >
+                                      {isActive && (
+                                        <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9.5, fontFamily: "ui-monospace, monospace", color: "#6FBF8B", border: "1px solid #6FBF8B", borderRadius: 8, padding: "1px 6px" }}>
+                                          {t("Activo")}
+                                        </span>
+                                      )}
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                        <span style={{ fontSize: 22 }}>{c.flag}</span>
+                                        <div>
+                                          <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600, color: "#eae4d8" }}>{c.label}</p>
+                                          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "#8a9490" }}>
+                                            {ld.cefr || "—"} · {wordCount} {t("palabras")}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      {!isActive && (
+                                        <button
+                                          style={{ ...styles.tab, width: "100%", marginTop: 8, padding: "5px 6px" }}
+                                          onClick={() => switchTargetLanguage(code)}
+                                        >
+                                          {t("Cambiar a este curso")}
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <button style={{ ...styles.tab, width: "100%", marginTop: 8 }} onClick={() => setShowAddLang(true)}>
+                                <Plus size={13} style={{ verticalAlign: "-2px" }} /> {t("Agregar otro idioma")}
+                              </button>
+                            </div>
+                          );
+                        })()}
 
                         {/* ── LEVEL UP: progreso de hitos para el próximo nivel ── */}
                         {(() => {
