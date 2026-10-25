@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from "react";
 import { GraduationCap, X, Check, ChevronRight, PartyPopper, Loader2, Lock } from "lucide-react";
-import { QUIZ_BANK, quizQuestionText } from "../data/quiz.js";
+import { bankFor, quizQuestionText } from "../data/quiz.js";
 import { CEFR_ORDER, cefrIndex } from "../data/patterns-cefr.js";
 
 export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, onPass, uiLang = "es", onFail }) {
@@ -26,15 +26,16 @@ export default function LevelUpQuizModal({ data, styles, t = (k) => k, onClose, 
   const [score, setScore] = useState(0);
   const [done, setDone] = useState(false);
 
-  /* ── Selección: 8 preguntas EXCLUSIVAS del nivel objetivo, orden aleatorio ── */
+  /* ── Selección: 8 preguntas EXCLUSIVAS del nivel objetivo (en el idioma que
+        se estudia: target_language), orden aleatorio ── */
   const questions = useMemo(() => {
-    const pool = [...(QUIZ_BANK[nextLevel] || [])];
+    const pool = [...bankFor(data?.targetLanguage || "en", nextLevel)];
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
     return pool.slice(0, 8);
-  }, [nextLevel]);
+  }, [nextLevel, data?.targetLanguage]);
 
   const total = questions.length;
   const needed = Math.max(1, Math.ceil(total * passScore));

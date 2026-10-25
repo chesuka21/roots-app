@@ -1,8 +1,10 @@
-/* ---------- Quiz data: QUIZ_BANK adaptativo + i18n de instrucciones ----------
-   Imported en App.jsx y Onboarding.jsx — evita hacer referencia circular.    */
+/* ---------- Quiz data: bancos por IDIOMA + CEFR + i18n de instrucciones ----------
+   BANKS[target_language][cefr] — las preguntas se evalúan en el idioma que se
+   estudia (target_language); las INSTRUCCIONES van en native_language (i18n).
+   EN es el banco completo; fr/de/it/pt tienen bancos core con fallback a EN. */
 import { CEFR_ORDER } from "./patterns-cefr.js";
 
-export const QUIZ_BANK = {
+const EN_BANK = {
   A1: [
     { q: "I ___ a book every night before bed.", options: ["reads", "read", "reading", "to read"], correct: 1 },
     { q: "What is the opposite of \"happy\"?", options: ["sad", "hungry", "tired", "fast"], correct: 0 },
@@ -52,6 +54,140 @@ export const QUIZ_BANK = {
     { q: "She's ___ the most qualified candidate.", options: ["by far", "by long", "so far", "far away"], correct: 0 },
   ],
 };
+
+/* ── Bancos multi-idioma: gramática esencial de fr/de/it/pt por nivel ──
+   fr completo (A1-C2); de/it/pt core A1-B1 — los niveles faltantes hacen
+   fallback automático al banco EN (bankFor). */
+
+const FR_BANK = {
+  A1: [
+    { q: "Elle ___ de la musique tous les jours.", options: ["écoute", "écoutes", "écoutent", "écouté"], correct: 0 },
+    { q: "Nous ___ français.", options: ["parle", "parles", "parlons", "parlez"], correct: 2 },
+    { q: "Tu ___ où ?", options: ["habites", "habite", "habitent", "habitez"], correct: 0 },
+    { q: "Quel est le contraire de « grand » ?", options: ["petit", "gros", "long", "haut"], correct: 0 },
+    { q: "Je ___ un chat.", options: ["ai", "as", "a", "ont"], correct: 0 },
+  ],
+  A2: [
+    { q: "Hier, je ___ au cinéma.", options: ["vais", "allais", "irai", "allé"], correct: 1 },
+    { q: "Elle est ___ que moi.", options: ["plus grande", "plus grand", "grand plus", "le plus grand"], correct: 0 },
+    { q: "Nous ___ fini nos devoirs.", options: ["sommes", "avons", "avez", "ont"], correct: 1 },
+    { q: "Je vais ___ le musée demain.", options: ["visité", "visiter", "visitons", "visite"], correct: 1 },
+    { q: "Ils ___ venir ce soir.", options: ["va", "vas", "vont", "allons"], correct: 2 },
+  ],
+  B1: [
+    { q: "Si tu viens, nous ___ le film.", options: ["regarderons", "regarderions", "regardions", "regardions"], correct: 0 },
+    { q: "Il faut que tu ___ à l'heure.", options: ["sois", "es", "seras", "serais"], correct: 0 },
+    { q: "Le livre que j'ai ___ est passionnant.", options: ["lu", "lis", "lire", "lisais"], correct: 0 },
+    { q: "Je te téléphonerai dès que je ___.", options: ["arriverai", "arriverais", "arrive", "arriver"], correct: 2 },
+    { q: "C'est le film ___ j'ai vu hier.", options: ["que", "qui", "dont", "où"], correct: 0 },
+  ],
+  B2: [
+    { q: "Si j'avais su, je ___ venu.", options: ["serais", "serai", "suis", "fus"], correct: 0 },
+    { q: "Il est temps que nous ___.", options: ["partons", "partions", "partirons", "partirions"], correct: 1 },
+    { q: "La maison ___ on parle date du XVIIIe siècle.", options: ["que", "qui", "dont", "où"], correct: 2 },
+    { q: "Je doute qu'il ___ raison.", options: ["a", "ait", "aura", "aurait"], correct: 1 },
+    { q: "Elle parle ___ elle pense.", options: ["comme", "comme si", "tel que", "aussi"], correct: 0 },
+  ],
+  C1: [
+    { q: "___ les résultats parus, il a compris la vérité.", options: ["À peine", "Dès", "Quand même", "Malgré que"], correct: 0 },
+    { q: "Il n'est pas ___ d'accepter la proposition.", options: ["si fou", "tel fou", "assez fou", "trop de fou"], correct: 0 },
+    { q: "Sa démission est venue ___ le scandale.", options: ["dans le sillage de", "au réveil de", "au sillage du", "par le réveil de"], correct: 0 },
+    { q: "Bien qu'il ___ riche, il est avare.", options: ["soit", "est", "sera", "serait"], correct: 0 },
+    { q: "___ riches qu'ils soient, ils ne sont pas heureux.", options: ["Si", "Quel", "Tout", "Malgré"], correct: 2 },
+  ],
+  C2: [
+    { q: "Choisissez l'équivalent formel de « Mais c'était cher. »", options: ["Cependant, c'était cher.", "Et c'était cher.", "Donc c'était cher.", "Parce que c'était cher."], correct: 0 },
+    { q: "Choisissez la phrase clivée correcte.", options: ["Ce dont j'ai besoin, c'est d'une pause.", "Ce que j'ai besoin, c'est d'une pause.", "Ce qu'il me faut besoin est une pause.", "Ce dont j'ai besoin, c'est une pause prendre."], correct: 0 },
+    { q: "Son excuse était ___ crédible.", options: ["tout sauf", "rien sauf", "quelque chose sauf", "mais que"], correct: 0 },
+    { q: "Elle est ___ la candidate la plus qualifiée.", options: ["de loin", "de long", "jusqu'ici", "loin"], correct: 0 },
+    { q: "___ riche qu'il soit, il n'est pas heureux.", options: ["Si", "Quel", "Tout", "Malgré"], correct: 2 },
+  ],
+};
+
+const DE_BANK = {
+  A1: [
+    { q: "Sie ___ jeden Tag Musik.", options: ["hört", "hören", "höre", "hört zu"], correct: 0 },
+    { q: "Wir ___ Deutsch.", options: ["sprecht", "spreche", "sprechen", "spricht"], correct: 2 },
+    { q: "Wo ___ du ?", options: ["wohnt", "wohne", "wohnen", "wohnst"], correct: 3 },
+    { q: "Das Gegenteil von 'groß' ist ___.", options: ["klein", "dick", "lang", "hoch"], correct: 0 },
+    { q: "Ich ___ einen Kaffee.", options: ["möchte", "möchtest", "möchten", "möchtet"], correct: 0 },
+  ],
+  A2: [
+    { q: "Gestern ___ ich ins Kino.", options: ["gehe", "ging", "gehen", "gehe ging"], correct: 1 },
+    { q: "Wir haben die Hausaufgaben ___.", options: ["machen", "gemacht", "machte", "machen gemacht"], correct: 1 },
+    { q: "Ich muss morgen ___ Museum gehen.", options: ["zum", "zu dem", "zu", "zur"], correct: 0 },
+    { q: "Sie ___ bald kommen.", options: ["wirst", "werden", "wird", "werdet"], correct: 2 },
+    { q: "Ich bin ___ als mein Bruder.", options: ["groß", "größer", "am größten", "großer"], correct: 1 },
+  ],
+  B1: [
+    { q: "Wenn du kommst, ___ wir den Film ansehen.", options: ["werden", "würden", "sehen", "werdet"], correct: 0 },
+    { q: "Es ist wichtig, dass du pünktlich ___.", options: ["bist", "sei", "warst", "wärst"], correct: 0 },
+    { q: "Das Buch, das ich ___, ist spannend.", options: ["gelesen habe", "gelesen", "lese", "las"], correct: 0 },
+    { q: "Ich rufe dich an, sobald ich ___.", options: ["ankomme", "ankam", "ankommen werde", "ankommen"], correct: 0 },
+    { q: "Der Mann, ___ Auto rot ist, wohnt hier.", options: ["dessen", "deren", "das", "der"], correct: 0 },
+  ],
+};
+
+const IT_BANK = {
+  A1: [
+    { q: "Lei ___ musica ogni giorno.", options: ["ascolta", "ascolti", "ascoltano", "ascoltato"], correct: 0 },
+    { q: "Noi ___ italiano.", options: ["parlo", "parli", "parliamo", "parlate"], correct: 2 },
+    { q: "Tu dove ___ ?", options: ["abiti", "abita", "abitano", "abitate"], correct: 0 },
+    { q: "Il contrario di « grande » è ___.", options: ["piccolo", "grosso", "lungo", "alto"], correct: 0 },
+    { q: "Io ___ un caffè.", options: ["vorrei", "vorresti", "vorremmo", "vorrebbero"], correct: 0 },
+  ],
+  A2: [
+    { q: "Ieri sono ___ al cinema.", options: ["andato", "andare", "andavo", "andrò"], correct: 0 },
+    { q: "Abbiamo ___ i compiti.", options: ["fatto", "fare", "facevamo", "faremo"], correct: 0 },
+    { q: "Domani ___ al museo.", options: ["andremo", "andiamo", "andavamo", "andato"], correct: 0 },
+    { q: "Sono ___ di mio fratello.", options: ["più alto", "più alta", "alto più", "il più alto"], correct: 0 },
+    { q: "Loro ___ venire stasera.", options: ["vanno", "vengono", "verranno", "vanno a"], correct: 2 },
+  ],
+  B1: [
+    { q: "Se vieni, ___ il film.", options: ["guarderemo", "guarderemmo", "guardavamo", "guarderanno"], correct: 0 },
+    { q: "È importante che tu ___ puntuale.", options: ["sia", "sei", "sarai", "fossi"], correct: 0 },
+    { q: "Il libro che ho ___ è appassionante.", options: ["letto", "leggere", "leggevo", "leggo"], correct: 0 },
+    { q: "Ti chiamerò appena ___.", options: ["arrivo", "arrivai", "arriverò", "arrivare"], correct: 0 },
+    { q: "L'uomo ___ macchina è rossa abita qui.", options: ["la cui", "di cui la", "del quale", "che la"], correct: 2 },
+  ],
+};
+
+const PT_BANK = {
+  A1: [
+    { q: "Ela ___ música todos os dias.", options: ["ouve", "ouves", "ouvem", "ouvido"], correct: 0 },
+    { q: "Nós ___ português.", options: ["falo", "falas", "falamos", "falam"], correct: 2 },
+    { q: "Onde você ___ ?", options: ["mora", "moram", "moramos", "morais"], correct: 0 },
+    { q: "O contrário de 'grande' é ___.", options: ["pequeno", "gordo", "longo", "alto"], correct: 0 },
+    { q: "Eu ___ um café.", options: ["quero", "queres", "queremos", "querem"], correct: 0 },
+  ],
+  A2: [
+    { q: "Ontem eu ___ ao cinema.", options: ["vou", "fui", "ia", "irei"], correct: 1 },
+    { q: "Nós ___ os deveres de casa.", options: ["fizemos", "fazemos", "faremos", "fiz"], correct: 0 },
+    { q: "Eles ___ vir hoje à noite.", options: ["vai", "vão", "vamos", "vás"], correct: 1 },
+    { q: "Eu sou ___ que meu irmão.", options: ["mais alto", "mais alta", "alto mais", "o mais alto"], correct: 0 },
+    { q: "Amanhã vou ___ o museu.", options: ["visitar", "visitado", "visitamos", "visito"], correct: 0 },
+  ],
+  B1: [
+    { q: "Se você vier, ___ o filme.", options: ["assistiremos", "assistiríamos", "assistíamos", "assistirão"], correct: 0 },
+    { q: "É importante que você ___ pontual.", options: ["seja", "é", "será", "fosse"], correct: 0 },
+    { q: "O livro que eu ___ é apaixonante.", options: ["li", "ler", "leio", "lia"], correct: 0 },
+    { q: "Vou te ligar assim que ___.", options: ["chegar", "cheguei", "chegarei", "chegando"], correct: 0 },
+    { q: "É o filme ___ eu vi ontem.", options: ["que", "quem", "cujo", "onde"], correct: 0 },
+  ],
+};
+
+/* Banco por idioma objetivo. Fallback por nivel: bankFor(). */
+export const BANKS = { en: EN_BANK, fr: FR_BANK, de: DE_BANK, it: IT_BANK, pt: PT_BANK };
+
+/* Preguntas de un rung para el idioma dado — fallback EN si el nivel no existe. */
+export function bankFor(targetLang, rung) {
+  const bank = BANKS[targetLang] || EN_BANK;
+  return bank[rung] || EN_BANK[rung] || [];
+}
+
+/* Acceso retro-compatible (inglés). */
+export const QUIZ_BANK = EN_BANK;
+
 export const PRESET_INTERESTS = ["Cooking", "Soccer", "Music", "Technology", "Movies & TV", "Video games", "Travel", "Fitness", "Art & design", "Business & finance", "Reading", "Nature"];
 
 export const QUIZ_I18N = {
@@ -79,7 +215,8 @@ export function nextRung(rung, correct) {
   const i = CEFR_ORDER.indexOf(rung);
   return CEFR_ORDER[Math.min(CEFR_ORDER.length - 1, Math.max(0, i + (correct ? 1 : -1)))];
 }
-export function pickQuizQuestion(rung, asked) {
-  const pool = (QUIZ_BANK[rung] || []).filter((q) => !asked.includes(q.q));
-  return pool.length ? pool[0] : (QUIZ_BANK[rung] || [])[0] || null;
+export function pickQuizQuestion(rung, asked, targetLang = "en") {
+  const bank = bankFor(targetLang, rung);
+  const pool = bank.filter((q) => !asked.includes(q.q));
+  return pool.length ? pool[0] : bank[0] || null;
 }

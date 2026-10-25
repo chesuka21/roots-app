@@ -31,7 +31,7 @@ export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "e
 
   const startQuiz = (lvl) => {
     const startRung = SELF_TO_RUNG[lvl] || "A1";
-    const q = pickQuizQuestion(startRung, []);
+    const q = pickQuizQuestion(startRung, [], targetLanguage);
     setSelfReport(lvl);
     setRung(startRung);
     setAsked(q ? [q.q] : []);
@@ -56,7 +56,7 @@ export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "e
       }
       // Adaptativo: correcto → sube de rung, error → baja.
       const nextR = nextRung(rung, correct);
-      const q = pickQuizQuestion(nextR, asked);
+      const q = pickQuizQuestion(nextR, asked, targetLanguage);
       setRung(nextR);
       setAsked((a) => (q ? [...a, q.q] : a));
       setCurrentQ(q);

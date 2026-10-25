@@ -9,7 +9,7 @@ import { useMemo, useState } from "react";
 import { X, Check, GraduationCap, ClipboardList } from "lucide-react";
 import { COURSES, courseOf } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
-import { QUIZ_BANK, quizQuestionText } from "../data/quiz.js";
+import { bankFor, quizQuestionText } from "../data/quiz.js";
 
 const PLACEMENT_LENGTH = 5; // test de ubicación rápido
 
@@ -31,7 +31,7 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
     const rungs = ["A1", "A1", "A2", "B1", "B1"];
     return rungs
       .map((r) => {
-        const pool = QUIZ_BANK[r] || [];
+        const pool = bankFor(lang, r);
         return pool[Math.floor(Math.random() * pool.length)];
       })
       .filter(Boolean);
