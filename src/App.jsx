@@ -2059,6 +2059,7 @@ export default function VocabGraph() {
         styles={styles}
         t={t}
         uiLang={uiLang}
+        initialTargetLang={data.targetLanguage}
         onNativeLangChange={(lang) => setData((prev) => ({ ...prev, profile: { ...(prev.profile || {}), native_language: lang } }))}
         onFinish={(level, cefr, profile, targetLang) => setData((prev) => {
           // Solo el CEFR del curso nuevo — el perfil global ya existe.

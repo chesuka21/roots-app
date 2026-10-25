@@ -4,7 +4,7 @@ import { SUPPORTED_LANGUAGES, languageLabel } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
 import { QUIZ_LENGTH, SELF_TO_RUNG, nextRung, pickQuizQuestion, quizQuestionText, PRESET_INTERESTS } from "../data/quiz.js";
 
-export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLangChange }) {
+export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "es", onNativeLangChange, initialTargetLang = "en" }) {
   // Textos de la interfaz traducidos con `t` (native_language del usuario);
   // el quiz usa quizQuestionText(q, uiLang) para sus instrucciones.
   // onNativeLangChange: propaga el idioma elegido AL ESTADO DE APP AL INSTANTE
@@ -14,7 +14,7 @@ export default function Onboarding({ onFinish, styles, t = (k) => k, uiLang = "e
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
   const [nativeLanguage, setNativeLanguage] = useState("es");
-  const [targetLanguage, setTargetLanguage] = useState("en");
+  const [targetLanguage, setTargetLanguage] = useState(initialTargetLang || "en");
   const [interests, setInterests] = useState([]);
   const [selfReport, setSelfReport] = useState(null);
   const [quizIdx, setQuizIdx] = useState(0);
