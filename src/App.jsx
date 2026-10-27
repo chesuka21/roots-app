@@ -2478,7 +2478,10 @@ export default function VocabGraph() {
                         </button>
                         <button
                           style={{ ...styles.learnBtn, flex: 1, background: isReset ? "#d9a441" : "#c96a5f" }}
-                          onClick={() => {
+                          onClick={(e) => {
+                            // stopPropagation: el mismo click NO debe burbujear al overlay del
+                            // modal quizOnly que se monta en este commit (lo cerraría al instante)
+                            e.stopPropagation();
                             const { mode, code } = courseConfirm;
                             setCourseConfirm(null);
                             if (mode === "reset") resetCourse(code);

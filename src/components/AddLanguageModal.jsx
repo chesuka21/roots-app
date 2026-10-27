@@ -5,7 +5,7 @@
    Paso 2: nivel inicial A1-C2 o Test de Ubicación Rápido (quiz adaptativo).
    Al confirmar: crea langData[nuevo] y activa el curso.                    */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { X, Check, GraduationCap, ClipboardList } from "lucide-react";
 import { COURSES, courseOf } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
@@ -64,8 +64,16 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
     onConfirm({ langCode: lang, cefr: cefrFinal, level: levelFinal });
   };
 
+  // Ignorar clicks en el overlay durante los primeros 300ms: el click del botón
+  // "Sí, reiniciar" (que monta este modal) burbujea y lo cerraría al instante.
+  const mountedAt = useRef(Date.now());
+  const guardOverlayClose = (e) => {
+    if (Date.now() - mountedAt.current < 300) return;
+    onClose();
+  };
+
   return (
-    <div style={{ ...styles.modalOverlay, zIndex: 70 }} onClick={onClose}>
+    <div style={{ ...styles.modalOverlay, zIndex: 70 }} onClick={guardOverlayClose}>
       <div style={{ ...styles.modalCard, maxWidth: 520, width: "92%" }} onClick={(e) => e.stopPropagation()}>
         <div style={styles.wordHeaderRow}>
           <h2 style={styles.sectionTitle}>
