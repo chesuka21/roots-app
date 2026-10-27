@@ -1,7 +1,7 @@
 import PracticeTab from "./components/PracticeTab.jsx";
 import Login from "./components/Login.jsx";
 import LanguageGate from "./components/LanguageGate.jsx";
-import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud } from "./lib/supabaseClient.js";
+import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud, deleteLanguageCloudData } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
 import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
@@ -999,6 +999,8 @@ export default function VocabGraph() {
     const [showLevelUpQuiz, setShowLevelUpQuiz] = useState(false);
     // Multi-curso: modal corto "agregar idioma" (sin repetir perfil)
     const [showAddLang, setShowAddLang] = useState(false);
+    // Multi-curso: confirmación de Reset/Eliminar curso (null | {mode, code})
+    const [courseConfirm, setCourseConfirm] = useState(null);
     // ── Supabase Auth: sesión de nube + gate de login (opcional) ──
     const [cloudSession, setCloudSession] = useState(null);
     const [loginSkipped, setLoginSkipped] = useState(false);
@@ -1293,6 +1295,99 @@ export default function VocabGraph() {
   const addTargetCourse = (langCode) => {
     if (!langCode) return;
     setShowAddLang(true);
+  };
+
+  // ── MULTI-CURSO: RESET del curso activo (borra words/edges/srs del idioma) ──
+  // a) elimina nodes/edges/srs del idioma (local + Supabase vía deleteLanguageCloudData)
+  // b) CEFR del curso → null (no iniciado)
+  // c) onboardedForLang → false
+  // d) el gate langQuizActive relanza el Quiz de Nivelación EN ESE IDIOMA solo
+  const resetCourse = (langCode) => {
+    if (!langCode) return;
+    setData((prev) => {
+      const langData = { ...(prev.langData || {}) };
+      const target = langCode === prev.targetLanguage;
+      const blank = {
+        nodes: {}, edges: [], learned: [], srs: {},
+        cefr: null, level: null, onboardedForLang: false,
+        reviewedToday: null, patternSrs: {}, patternHistory: {}, patternProgress: {},
+        customPatterns: [], suggestedSeen: [],
+      };
+      langData[langCode] = blank;
+      if (!target) {
+        // reset de un curso NO activo: solo vaciar su langData
+        return { ...prev, langData };
+      }
+      // reset del curso ACTIVO: los punteros raíz apuntan al langData vacío
+      return {
+        ...prev,
+        langData,
+        nodes: {}, edges: [], learned: [], srs: {},
+        cefr: null, level: null,
+        onboardedForLang: false,
+        reviewedToday: null, patternSrs: {}, patternHistory: {}, patternProgress: {},
+        customPatterns: [], suggestedSeen: [],
+        selected: null, reviewActive: false,
+      };
+    });
+    nodeCountRef.current = -1; // rebuild del grafo (queda vacío)
+    resetZoom();
+    // Supabase: borrar words/edges/srs_cards del idioma (fire & forget con catch)
+    const ids = Object.keys(data?.langData?.[langCode]?.nodes || {});
+    if (cloudSession && ids.length) {
+      deleteLanguageCloudData(cloudSession.user.id, ids).catch((e) => console.warn("reset cloud:", e?.message));
+    }
+  };
+
+  // ── MULTI-CURSO: ELIMINAR el idioma del perfil (courses[] + langData) ──
+  // Si era el activo → cambia al primer curso disponible.
+  const deleteCourse = (langCode) => {
+    if (!langCode) return;
+    setData((prev) => {
+      const courses = (prev.courses?.length ? prev.courses : [prev.targetLanguage || "en"]).filter((c) => c !== langCode);
+      if (!courses.length) return prev; // nunca dejar el perfil sin cursos
+      const langData = { ...(prev.langData || {}) };
+      delete langData[langCode];
+      const ids = Object.keys(prev.langData?.[langCode]?.nodes || {});
+      if (langCode !== prev.targetLanguage) {
+        // borrado de curso NO activo: simple
+        queueMicrotask(() => {
+          if (cloudSession && ids.length) deleteLanguageCloudData(cloudSession.user.id, ids).catch(() => {});
+        });
+        return { ...prev, courses, langData };
+      }
+      // borrado del curso ACTIVO → activar el primer curso restante
+      const nextCode = courses[0];
+      const dest = langData[nextCode] || { nodes: {}, edges: [], learned: [], srs: {}, cefr: null, level: null, onboardedForLang: false };
+      return {
+        ...prev,
+        courses,
+        langData,
+        targetLanguage: nextCode,
+        nodes: dest.nodes || {},
+        edges: dest.edges || [],
+        learned: dest.learned || [],
+        srs: dest.srs || {},
+        cefr: dest.cefr ?? null,
+        level: dest.level ?? null,
+        onboardedForLang: dest.onboardedForLang ?? false,
+        reviewedToday: dest.reviewedToday || null,
+        patternSrs: dest.patternSrs || {},
+        patternHistory: dest.patternHistory || {},
+        patternProgress: dest.patternProgress || {},
+        customPatterns: dest.customPatterns || [],
+        suggestedSeen: dest.suggestedSeen || [],
+        selected: null, reviewActive: false,
+      };
+    });
+    nodeCountRef.current = -1;
+    resetZoom();
+    // Si el curso eliminado era el activo, actualizar la voz TTS al nuevo activo
+    const wasActive = langCode === data?.targetLanguage;
+    if (wasActive) {
+      const nextCode = (data?.courses || []).filter((c) => c !== langCode)[0];
+      if (nextCode) setActiveCourseVoice(courseOf(nextCode).voice);
+    }
   };
 
   // ── MULTI-CURSO: persistir los cambios del curso activo de vuelta a langData ──
@@ -2352,6 +2447,42 @@ export default function VocabGraph() {
                 />
               )}
 
+              {/* ── RESET / DELETE COURSE: confirmación destructiva ── */}
+              {courseConfirm && (() => {
+                const c = courseOf(courseConfirm.code);
+                const isReset = courseConfirm.mode === "reset";
+                return (
+                  <div style={styles.modalOverlay} onClick={() => setCourseConfirm(null)}>
+                    <div style={{ ...styles.modalCard, maxWidth: 440, width: "90%" }} onClick={(e) => e.stopPropagation()}>
+                      <h2 style={styles.sectionTitle}>
+                        {isReset ? `♻ ${t("Reiniciar curso de")} ${c.flag} ${c.label}` : `✕ ${t("Eliminar")} ${c.flag} ${c.label}`}
+                      </h2>
+                      <p style={styles.sectionBody}>
+                        {isReset
+                          ? t("Se borrarán TODAS las palabras, conexiones y tarjetas de repaso de este idioma (también de la nube). Tu nivel CEFR se restablecerá y el quiz de nivelación se lanzará de nuevo. Tu perfil, XP y racha NO se tocan.")
+                          : t("Se quitará este idioma de tu perfil y se borrarán todos sus datos (palabras, conexiones, repasos). Esta acción no se puede deshacer.")}
+                      </p>
+                      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                        <button style={{ ...styles.tab, flex: 1 }} onClick={() => setCourseConfirm(null)}>
+                          {t("Cancelar")}
+                        </button>
+                        <button
+                          style={{ ...styles.learnBtn, flex: 1, background: isReset ? "#d9a441" : "#c96a5f" }}
+                          onClick={() => {
+                            const { mode, code } = courseConfirm;
+                            setCourseConfirm(null);
+                            if (mode === "reset") resetCourse(code);
+                            else deleteCourse(code);
+                          }}
+                        >
+                          {isReset ? t("Sí, reiniciar") : t("Sí, eliminar")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── LEVEL UP QUIZ: examen de certificación CEFR ── */}
               {showLevelUpQuiz && (() => {                const elig = checkLevelUpEligibility(data);
                 if (!elig) return null;
@@ -2514,6 +2645,25 @@ export default function VocabGraph() {
                                           {t("Cambiar a este curso")}
                                         </button>
                                       )}
+                                      {/* Reset / Eliminar curso */}
+                                      <div style={{ display: "flex", gap: 6, marginTop: isActive ? 8 : 6 }}>
+                                        <button
+                                          style={{ ...styles.tab, flex: 1, padding: "4px 6px", fontSize: 11, color: "#d9a441" }}
+                                          onClick={() => setCourseConfirm({ mode: "reset", code })}
+                                          title={t("Borra las palabras, conexiones y repasos de este idioma")}
+                                        >
+                                          ♻ {t("Reiniciar curso")}
+                                        </button>
+                                        {courses.length > 1 && (
+                                          <button
+                                            style={{ ...styles.tab, flex: 1, padding: "4px 6px", fontSize: 11, color: "#d98c8c" }}
+                                            onClick={() => setCourseConfirm({ mode: "delete", code })}
+                                            title={t("Quita este idioma de tu perfil y borra sus datos")}
+                                          >
+                                            ✕ {t("Eliminar")}
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   );
                                 })}

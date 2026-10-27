@@ -174,6 +174,30 @@ export async function pushSrsCards(userId, srs) {
   if (error) throw error;
 }
 
+// Borrar de la nube TODOS los datos de un idioma (Reset / Delete Course).
+// Recibe los word_ids del curso (client-side: langData[code].nodes) porque las
+// tablas words/edges/srs_cards no tienen columna target_language — el aislado
+// multi-idioma vive en el documento local (langData). RLS limita a user_id.
+export async function deleteLanguageCloudData(userId, wordIds) {
+  if (!supabase) return;
+  const ids = [...(wordIds || [])];
+  if (!ids.length) return;
+  // words: borrar por word_id (lotes de 100 para no exceder límites de URL)
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    await supabase.from("words").delete().eq("user_id", userId).in("word_id", chunk);
+    await supabase.from("srs_cards").delete().eq("user_id", userId).in("card_key", chunk);
+  }
+  // edges: no hay índice por idioma — traer las del usuario y borrar las que
+  // conecten nodos de este curso (source o target ∈ ids)
+  const { data: allEdges } = await supabase.from("edges").select("edge_key,source,target").eq("user_id", userId);
+  const idSet = new Set(ids);
+  const toDelete = (allEdges || []).filter((e) => idSet.has(e.source) || idSet.has(e.target)).map((e) => e.edge_key);
+  for (let i = 0; i < toDelete.length; i += 100) {
+    await supabase.from("edges").delete().eq("user_id", userId).in("edge_key", toDelete.slice(i, i + 100));
+  }
+}
+
 // Sincronización completa (llamada tras cambios grandes: onboarding, practice, save word)
 export async function syncAllToCloud(userId, data) {
   if (!supabase) return;
