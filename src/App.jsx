@@ -2153,7 +2153,9 @@ export default function VocabGraph() {
   // Un curso nuevo (onboardedForLang=false) lanza el quiz de nivelación de ese
   // idioma (el perfil general ya está onboarded — solo falta el CEFR del curso).
   const langQuizActive = data.onboarded && data.onboardedForLang === false;
-  if (langQuizActive) {
+  // En modo quizOnly (Reset → examen directo) el gate NO monta el Onboarding
+  // completo: el AddLanguageModal quizOnly vive en el árbol de modales de abajo.
+  if (langQuizActive && !langQuizOnly) {
     return (
       <Onboarding
         styles={styles}
