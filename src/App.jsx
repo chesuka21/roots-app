@@ -1001,6 +1001,8 @@ export default function VocabGraph() {
     const [showAddLang, setShowAddLang] = useState(false);
     // Multi-curso: confirmación de Reset/Eliminar curso (null | {mode, code})
     const [courseConfirm, setCourseConfirm] = useState(null);
+    // Multi-curso: examen obligatorio tras Reset (código del curso a nivelar)
+    const [langQuizOnly, setLangQuizOnly] = useState(null);
     // ── Supabase Auth: sesión de nube + gate de login (opcional) ──
     const [cloudSession, setCloudSession] = useState(null);
     const [loginSkipped, setLoginSkipped] = useState(false);
@@ -1332,6 +1334,9 @@ export default function VocabGraph() {
     });
     nodeCountRef.current = -1; // rebuild del grafo (queda vacío)
     resetZoom();
+    // Examen OBLIGATORIO tras reset: AddLanguageModal en modo quizOnly lanza las
+    // 5 preguntas adaptativas EN ESE IDIOMA y asigna el CEFR real obtenido.
+    setLangQuizOnly(langCode);
     // Supabase: borrar words/edges/srs_cards del idioma (fire & forget con catch)
     const ids = Object.keys(data?.langData?.[langCode]?.nodes || {});
     if (cloudSession && ids.length) {
@@ -2430,18 +2435,21 @@ export default function VocabGraph() {
                 </div>
               )}
 
-              {/* ── ADD LANGUAGE: modal corto de 2 pasos (sin repetir perfil) ── */}
-              {showAddLang && (
+              {/* ── ADD LANGUAGE: modal corto de 2 pasos (sin repetir perfil) ──
+                  quizOnlyLang: Reset de curso → examen obligatorio directo ── */}
+              {(showAddLang || langQuizOnly) && (
                 <AddLanguageModal
                   data={data}
                   styles={styles}
                   t={t}
                   uiLang={uiLang}
-                  onClose={() => setShowAddLang(false)}
+                  quizOnlyLang={langQuizOnly}
+                  onClose={() => { setShowAddLang(false); setLangQuizOnly(null); }}
                   onConfirm={({ langCode, cefr }) => {
-                    // Activa el curso con el CEFR elegido/testeado — sin onboarding repetido
+                    // Activa el curso con el CEFR obtenido — sin onboarding repetido
                     switchTargetLanguage(langCode, cefr);
                     setShowAddLang(false);
+                    setLangQuizOnly(null);
                     setActiveTab("map");
                   }}
                 />
@@ -2452,7 +2460,7 @@ export default function VocabGraph() {
                 const c = courseOf(courseConfirm.code);
                 const isReset = courseConfirm.mode === "reset";
                 return (
-                  <div style={styles.modalOverlay} onClick={() => setCourseConfirm(null)}>
+                  <div style={{ ...styles.modalOverlay, zIndex: 70 }} onClick={() => setCourseConfirm(null)}>
                     <div style={{ ...styles.modalCard, maxWidth: 440, width: "90%" }} onClick={(e) => e.stopPropagation()}>
                       <h2 style={styles.sectionTitle}>
                         {isReset ? `♻ ${t("Reiniciar curso de")} ${c.flag} ${c.label}` : `✕ ${t("Eliminar")} ${c.flag} ${c.label}`}

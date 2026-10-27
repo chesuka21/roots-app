@@ -13,60 +13,64 @@ import { bankFor, quizQuestionText } from "../data/quiz.js";
 
 const PLACEMENT_LENGTH = 5; // test de ubicación rápido
 
-export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = "es", onClose, onConfirm }) {
-  const [step, setStep] = useState(1); // 1: idioma | 2: nivel
-  const [lang, setLang] = useState(null);
-  const [mode, setMode] = useState("select"); // select | placement | result
+export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = "es", onClose, onConfirm, quizOnlyLang = null }) {
+  // quizOnlyLang: curso pre-seleccionado (Reset) → arranca directo en el examen
+  const [step, setStep] = useState(quizOnlyLang ? 2 : 1); // 1: idioma | 2: nivel/quiz
+  const [lang, setLang] = useState(quizOnlyLang);
+  const [mode, setMode] = useState(quizOnlyLang ? "placement" : "select"); // select | placement | result
   const [qIdx, setQIdx] = useState(0);
   const [correct, setCorrect] = useState(0);
   const [picked, setPicked] = useState(null);
 
   const existing = data?.courses || [data?.targetLanguage || "en"];
-  const available = COURSES.filter((c) => !existing.includes(c.code));
+  const available = COURSES.filter((c) => !existing.includes(c.code) || c.code === quizOnlyLang);
   const course = lang ? courseOf(lang) : null;
 
-  /* Test de ubicación: 5 preguntas mezcladas A1→B1 del nuevo idioma (rung final = CEFR) */
-  const placementQs = useMemo(() => {
-    if (mode !== "placement") return [];
-    const rungs = ["A1", "A1", "A2", "B1", "B1"];
-    return rungs
-      .map((r) => {
-        const pool = bankFor(lang, r);
-        return pool[Math.floor(Math.random() * pool.length)];
-      })
-      .filter(Boolean);
-  }, [mode]);
+  /* Test de ubicación: 5 preguntas ADAPTATIVAS del idioma elegido.
+     Escalera real (como el onboarding): cada respuesta mueve el rung
+     (correcto sube, error baja) — el rung final ES el CEFR del curso. */
+  const [rung, setRung] = useState("A1");
+  const [asked, setAsked] = useState([]);
+  const currentQ = useMemo(() => {
+    if (mode !== "placement") return null;
+    const pool = bankFor(lang, rung).filter((q) => !asked.includes(q.q));
+    return (pool.length ? pool : bankFor(lang, rung))[0] || null;
+  }, [mode, lang, rung, asked]);
 
   const answerPlacement = (i) => {
-    if (picked !== null) return;
+    if (picked !== null || !currentQ) return;
     setPicked(i);
-    if (i === placementQs[qIdx]?.correct) setCorrect((c) => c + 1);
+    setTimeout(() => {
+      const isCorrect = i === currentQ.correct;
+      if (isCorrect) setCorrect((c) => c + 1);
+      const nextIdx = qIdx + 1;
+      if (nextIdx >= PLACEMENT_LENGTH) {
+        setMode("result");
+        setPicked(null);
+        return;
+      }
+      const ni = CEFR_ORDER.indexOf(rung);
+      const nextRung = CEFR_ORDER[Math.min(CEFR_ORDER.length - 1, Math.max(0, ni + (isCorrect ? 1 : -1)))];
+      setRung(nextRung);
+      setAsked((a) => [...a, currentQ.q]);
+      setQIdx(nextIdx);
+      setPicked(null);
+    }, 350);
   };
-  const advancePlacement = () => {
-    if (qIdx + 1 >= placementQs.length) {
-      setMode("result");
-      return;
-    }
-    setQIdx((i) => i + 1);
-    setPicked(null);
-  };
-  /* Score → CEFR: 0-1 → A1 · 2-3 → A2 · 4-5 → B1 */
-  const placementCefr = () => {
-    if (correct >= 4) return "B1";
-    if (correct >= 2) return "A2";
-    return "A1";
-  };
+  /* Rung final tras la escalera = CEFR real (misma regla del onboarding) */
+  const placementCefr = () => rung;
 
   const confirm = (cefrFinal, levelFinal) => {
     onConfirm({ langCode: lang, cefr: cefrFinal, level: levelFinal });
   };
 
   return (
-    <div style={styles.modalOverlay} onClick={onClose}>
+    <div style={{ ...styles.modalOverlay, zIndex: 70 }} onClick={onClose}>
       <div style={{ ...styles.modalCard, maxWidth: 520, width: "92%" }} onClick={(e) => e.stopPropagation()}>
         <div style={styles.wordHeaderRow}>
           <h2 style={styles.sectionTitle}>
-            {course ? <span style={{ marginRight: 7 }}>{course.flag}</span> : "🌍"} {t("Agregar curso")}
+            {course ? <span style={{ marginRight: 7 }}>{course.flag}</span> : "🌍"}{" "}
+            {quizOnlyLang ? t("Test de ubicación") : t("Agregar curso")}
           </h2>
           <button style={styles.iconBtn} onClick={onClose} title={t("Cerrar")}>
             <X size={16} />
@@ -134,33 +138,28 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
           </>
         )}
 
-        {/* Test de ubicación */}
-        {step === 2 && mode === "placement" && (
+        {/* Test de ubicación — pregunta adaptativa actual */}
+        {step === 2 && mode === "placement" && currentQ && (
           <>
             <p style={styles.formHint}>
-              {t("Pregunta")} {qIdx + 1}/{placementQs.length}
+              {t("Nivelación adaptativa — pregunta")} {qIdx + 1} {t("of")} {PLACEMENT_LENGTH} · {t("nivel")} {rung}
             </p>
-            <p style={styles.sectionBody}>{quizQuestionText(placementQs[qIdx], uiLang)}</p>
+            <p style={styles.sectionBody}>{quizQuestionText(currentQ, uiLang)}</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "10px 0" }}>
-              {placementQs[qIdx].options.map((opt, i) => (
+              {currentQ.options.map((opt, i) => (
                 <button
                   key={i}
                   onClick={() => answerPlacement(i)}
                   style={{
                     ...styles.onboardOption,
-                    ...(picked !== null && i === placementQs[qIdx].correct ? { border: "1px solid #6FBF8B", background: "rgba(111,191,139,0.12)", color: "#9fd9b8" } : {}),
-                    ...(picked === i && i !== placementQs[qIdx].correct ? { border: "1px solid #d98c8c", color: "#d98c8c" } : {}),
+                    ...(picked !== null && i === currentQ.correct ? { border: "1px solid #6FBF8B", background: "rgba(111,191,139,0.12)", color: "#9fd9b8" } : {}),
+                    ...(picked === i && i !== currentQ.correct ? { border: "1px solid #d98c8c", color: "#d98c8c" } : {}),
                   }}
                 >
                   {opt}
                 </button>
               ))}
             </div>
-            {picked !== null && (
-              <button style={styles.learnBtn} onClick={advancePlacement}>
-                {qIdx + 1 >= placementQs.length ? t("Ver resultado") : t("Siguiente")}
-              </button>
-            )}
           </>
         )}
 
@@ -170,7 +169,7 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
             <div style={{ textAlign: "center", margin: "14px 0" }}>
               <GraduationCap size={40} color="#d9a441" />
               <p style={{ ...styles.progressNum, margin: "10px 0 4px", color: "#6FBF8B" }}>
-                {correct}/{placementQs.length}
+                {correct}/{PLACEMENT_LENGTH}
               </p>
               <p style={styles.sectionBody}>
                 {t("Tu nivel en")} {course?.label}: <b>{placementCefr()}</b>

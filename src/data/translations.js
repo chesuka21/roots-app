@@ -239,6 +239,7 @@ export const TRANSLATIONS = {
     "Sí, eliminar": "Yes, delete",
     "Borra las palabras, conexiones y repasos de este idioma": "Deletes this language's words, connections and reviews",
     "Quita este idioma de tu perfil y borra sus datos": "Removes this language from your profile and deletes its data",
+    "Test de ubicación": "Placement test",
   },
   es: {
     // — navegación —
@@ -469,6 +470,7 @@ export const TRANSLATIONS = {
     "Sí, eliminar": "Sí, eliminar",
     "Borra las palabras, conexiones y repasos de este idioma": "Borra las palabras, conexiones y repasos de este idioma",
     "Quita este idioma de tu perfil y borra sus datos": "Quita este idioma de tu perfil y borra sus datos",
+    "Test de ubicación": "Test de ubicación",
   },
   fr: {
     // — navigation —
@@ -699,6 +701,7 @@ export const TRANSLATIONS = {
     "Sí, eliminar": "Oui, supprimer",
     "Borra las palabras, conexiones y repasos de este idioma": "Supprime les mots, connexions et révisions de cette langue",
     "Quita este idioma de tu perfil y borra sus datos": "Retire cette langue de ton profil et supprime ses données",
+    "Test de ubicación": "Test de positionnement",
   },
   de: {
     // — Navigation —
@@ -929,6 +932,7 @@ export const TRANSLATIONS = {
     "Sí, eliminar": "Ja, löschen",
     "Borra las palabras, conexiones y repasos de este idioma": "Löscht Wörter, Verbindungen und Wiederholungen dieser Sprache",
     "Quita este idioma de tu perfil y borra sus datos": "Entfernt diese Sprache aus deinem Profil und löscht ihre Daten",
+    "Test de ubicación": "Einstufungstest",
   },
   pt: {
     // — navegação —
@@ -1159,6 +1163,7 @@ export const TRANSLATIONS = {
     "Sí, eliminar": "Sim, excluir",
     "Borra las palabras, conexiones y repasos de este idioma": "Apaga as palavras, conexões e revisões deste idioma",
     "Quita este idioma de tu perfil y borra sus datos": "Remove este idioma do seu perfil e apaga seus dados",
+    "Test de ubicación": "Teste de nivelamento",
   },
 };
 
