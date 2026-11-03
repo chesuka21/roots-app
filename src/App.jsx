@@ -4,7 +4,7 @@ import LanguageGate from "./components/LanguageGate.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud, deleteLanguageCloudData } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
+import { Sprout, Languages, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
 import Onboarding from "./components/Onboarding.jsx";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN, verbForms } from "./data/wordbank.js";
 import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
@@ -27,6 +27,7 @@ import { ensureLevelUpCss } from "./components/levelUpFx.js";
 import { milestoneProgress, checkLevelUpEligibility } from "./data/levelMilestones.js";
 import LanguageSwitcher from "./components/LanguageSwitcher.jsx";
 import AddLanguageModal from "./components/AddLanguageModal.jsx";
+import Flag from "./components/Flag.jsx";
 import { COURSES, courseOf } from "./data/translations.js";
 import { Table2 } from "lucide-react";
 
@@ -2465,7 +2466,17 @@ export default function VocabGraph() {
                   <div style={{ ...styles.modalOverlay, zIndex: 70 }} onClick={() => setCourseConfirm(null)}>
                     <div style={{ ...styles.modalCard, maxWidth: 440, width: "90%" }} onClick={(e) => e.stopPropagation()}>
                       <h2 style={styles.sectionTitle}>
-                        {isReset ? `♻ ${t("Reiniciar curso de")} ${c.flag} ${c.label}` : `✕ ${t("Eliminar")} ${c.flag} ${c.label}`}
+                        {isReset ? (
+                          <>
+                            <RotateCcw size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
+                            {t("Reiniciar curso de")} <Flag code={c.code} size={18} /> {c.label}
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
+                            {t("Eliminar")} <Flag code={c.code} size={18} /> {c.label}
+                          </>
+                        )}
                       </h2>
                       <p style={styles.sectionBody}>
                         {isReset
@@ -2642,7 +2653,7 @@ export default function VocabGraph() {
                                         </span>
                                       )}
                                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                        <span style={{ fontSize: 22 }}>{c.flag}</span>
+                                        <Flag code={c.code} size={24} />
                                         <div>
                                           <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600, color: "#eae4d8" }}>{c.label}</p>
                                           <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "#8a9490" }}>
@@ -2665,7 +2676,7 @@ export default function VocabGraph() {
                                           onClick={() => setCourseConfirm({ mode: "reset", code })}
                                           title={t("Borra las palabras, conexiones y repasos de este idioma")}
                                         >
-                                          ♻ {t("Reiniciar curso")}
+                                          <RotateCcw size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />{t("Reiniciar curso")}
                                         </button>
                                         {courses.length > 1 && (
                                           <button
@@ -2673,7 +2684,7 @@ export default function VocabGraph() {
                                             onClick={() => setCourseConfirm({ mode: "delete", code })}
                                             title={t("Quita este idioma de tu perfil y borra sus datos")}
                                           >
-                                            ✕ {t("Eliminar")}
+                                            <Trash2 size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />{t("Eliminar")}
                                           </button>
                                         )}
                                       </div>
@@ -3226,7 +3237,7 @@ export default function VocabGraph() {
                   showTranslation ? (
                     <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
                   ) : (
-                    <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
+                    <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}><Languages size={12} style={{ verticalAlign: "-2px", marginRight: 3 }} />tap to translate</button>
                   )
                 )}
 
@@ -4069,7 +4080,7 @@ export default function VocabGraph() {
                     showTranslation ? (
                       <p style={styles.translationText} onClick={() => setShowTranslation(false)}>{w.defEs}</p>
                     ) : (
-                      <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}>🇪🇸 tap to translate</button>
+                      <button style={styles.translateBtn} onClick={() => setShowTranslation(true)}><Languages size={12} style={{ verticalAlign: "-2px", marginRight: 3 }} />tap to translate</button>
                     )
                   )}
                   {/* Selector de TIEMPO VERBAL: solo si la palabra es un verbo con formas.

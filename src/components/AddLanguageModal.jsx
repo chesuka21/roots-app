@@ -6,10 +6,11 @@
    Al confirmar: crea langData[nuevo] y activa el curso.                    */
 
 import { useMemo, useState, useRef } from "react";
-import { X, Check, GraduationCap, ClipboardList } from "lucide-react";
+import { X, Check, GraduationCap, ClipboardList, Globe } from "lucide-react";
 import { COURSES, courseOf } from "../data/translations.js";
 import { CEFR_ORDER } from "../data/patterns-cefr.js";
 import { bankFor, quizQuestionText } from "../data/quiz.js";
+import Flag from "./Flag.jsx";
 
 const PLACEMENT_LENGTH = 5; // test de ubicación rápido
 
@@ -77,7 +78,7 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
       <div style={{ ...styles.modalCard, maxWidth: 520, width: "92%" }} onClick={(e) => e.stopPropagation()}>
         <div style={styles.wordHeaderRow}>
           <h2 style={styles.sectionTitle}>
-            {course ? <span style={{ marginRight: 7 }}>{course.flag}</span> : "🌍"}{" "}
+            {course ? <span style={{ marginRight: 7, display: "inline-flex", verticalAlign: "-3px" }}><Flag code={course.code} size={20} /></span> : <Globe size={20} style={{ verticalAlign: "-4px", marginRight: 6 }} />}{" "}
             {quizOnlyLang ? t("Test de ubicación") : t("Agregar curso")}
           </h2>
           <button style={styles.iconBtn} onClick={onClose} title={t("Cerrar")}>
@@ -101,7 +102,7 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
                   }}
                   onClick={() => setLang(c.code)}
                 >
-                  <span style={{ fontSize: 24 }}>{c.flag}</span>
+                  <Flag code={c.code} size={26} />
                   <span style={{ color: "#eae4d8", fontSize: 14, fontWeight: 600 }}>{c.label}</span>
                   {lang === c.code && <Check size={15} color="#6FBF8B" style={{ marginLeft: "auto" }} />}
                 </button>
@@ -120,28 +121,19 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
           </>
         )}
 
-        {/* ── PASO 2: nivel inicial o test de ubicación ── */}
+        {/* ── PASO 2: Test de Ubicación OBLIGATORIO (5 preguntas en el idioma) ──
+            El quiz abre al presionar "Tomar examen de ubicación" — sin atajo
+            de nivel manual: el nivel manual solo se ofrece tras el resultado. ── */}
         {step === 2 && mode === "select" && (
           <>
             <p style={styles.sectionBody}>
-              {t("¿Cuál es tu nivel actual en")} {course?.label}? {t("Si no estás seguro, haz el test de ubicación de 5 preguntas.")}
+              {t("Antes de empezar, responde el test de ubicación de 5 preguntas en")} {course?.label}.
             </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-              {CEFR_ORDER.map((c) => (
-                <button
-                  key={c}
-                  style={styles.onboardOption}
-                  onClick={() => confirm(c, c)}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
             <button
-              style={{ ...styles.tab, marginTop: 8 }}
-              onClick={() => { setMode("placement"); setQIdx(0); setCorrect(0); setPicked(null); }}
+              style={styles.learnBtn}
+              onClick={() => { setMode("placement"); setQIdx(0); setCorrect(0); setPicked(null); setRung("A1"); setAsked([]); }}
             >
-              <ClipboardList size={14} style={{ verticalAlign: "-2px" }} /> {t("Test de Ubicación Rápido")}
+              <ClipboardList size={15} style={{ verticalAlign: "-3px", marginRight: 6 }} /> {t("Tomar examen de ubicación")}
             </button>
           </>
         )}
@@ -182,6 +174,18 @@ export default function AddLanguageModal({ data, styles, t = (k) => k, uiLang = 
               <p style={styles.sectionBody}>
                 {t("Tu nivel en")} {course?.label}: <b>{placementCefr()}</b>
               </p>
+            </div>
+            <p style={styles.formHint}>{t("¿No es correcto? Elige tu nivel manualmente:")}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0", justifyContent: "center" }}>
+              {CEFR_ORDER.map((c) => (
+                <button
+                  key={c}
+                  style={placementCefr() === c ? styles.onboardOptionPicked : styles.onboardOption}
+                  onClick={() => setRung(c)}
+                >
+                  {c}
+                </button>
+              ))}
             </div>
             <button style={styles.learnBtn} onClick={() => confirm(placementCefr(), placementCefr())}>
               {t("Comenzar")} {course?.label} <ChevronRightInline />

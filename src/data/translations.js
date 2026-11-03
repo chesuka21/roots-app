@@ -240,6 +240,9 @@ export const TRANSLATIONS = {
     "Borra las palabras, conexiones y repasos de este idioma": "Deletes this language's words, connections and reviews",
     "Quita este idioma de tu perfil y borra sus datos": "Removes this language from your profile and deletes its data",
     "Test de ubicación": "Placement test",
+    "Antes de empezar, responde el test de ubicación de 5 preguntas en": "Before you start, take the 5-question placement test in",
+    "Tomar examen de ubicación": "Take placement test",
+    "¿No es correcto? Elige tu nivel manualmente:": "Not right? Pick your level manually:",
   },
   es: {
     // — navegación —
@@ -471,6 +474,9 @@ export const TRANSLATIONS = {
     "Borra las palabras, conexiones y repasos de este idioma": "Borra las palabras, conexiones y repasos de este idioma",
     "Quita este idioma de tu perfil y borra sus datos": "Quita este idioma de tu perfil y borra sus datos",
     "Test de ubicación": "Test de ubicación",
+    "Antes de empezar, responde el test de ubicación de 5 preguntas en": "Antes de empezar, responde el test de ubicación de 5 preguntas en",
+    "Tomar examen de ubicación": "Tomar examen de ubicación",
+    "¿No es correcto? Elige tu nivel manualmente:": "¿No es correcto? Elige tu nivel manualmente:",
   },
   fr: {
     // — navigation —
@@ -702,6 +708,9 @@ export const TRANSLATIONS = {
     "Borra las palabras, conexiones y repasos de este idioma": "Supprime les mots, connexions et révisions de cette langue",
     "Quita este idioma de tu perfil y borra sus datos": "Retire cette langue de ton profil et supprime ses données",
     "Test de ubicación": "Test de positionnement",
+    "Antes de empezar, responde el test de ubicación de 5 preguntas en": "Avant de commencer, réponds au test de positionnement de 5 questions en",
+    "Tomar examen de ubicación": "Passer le test de positionnement",
+    "¿No es correcto? Elige tu nivel manualmente:": "Ce n'est pas juste ? Choisis ton niveau manuellement :",
   },
   de: {
     // — Navigation —
@@ -933,6 +942,9 @@ export const TRANSLATIONS = {
     "Borra las palabras, conexiones y repasos de este idioma": "Löscht Wörter, Verbindungen und Wiederholungen dieser Sprache",
     "Quita este idioma de tu perfil y borra sus datos": "Entfernt diese Sprache aus deinem Profil und löscht ihre Daten",
     "Test de ubicación": "Einstufungstest",
+    "Antes de empezar, responde el test de ubicación de 5 preguntas en": "Bevor du startest, mach den 5-Fragen-Einstufungstest in",
+    "Tomar examen de ubicación": "Einstufungstest starten",
+    "¿No es correcto? Elige tu nivel manualmente:": "Nicht richtig? Wähle dein Niveau manuell:",
   },
   pt: {
     // — navegação —
@@ -1164,6 +1176,9 @@ export const TRANSLATIONS = {
     "Borra las palabras, conexiones y repasos de este idioma": "Apaga as palavras, conexões e revisões deste idioma",
     "Quita este idioma de tu perfil y borra sus datos": "Remove este idioma do seu perfil e apaga seus dados",
     "Test de ubicación": "Teste de nivelamento",
+    "Antes de empezar, responde el test de ubicación de 5 preguntas en": "Antes de começar, responda o teste de nivelamento de 5 perguntas em",
+    "Tomar examen de ubicación": "Fazer teste de nivelamento",
+    "¿No es correcto? Elige tu nivel manualmente:": "Não está certo? Escolha seu nível manualmente:",
   },
 };
 

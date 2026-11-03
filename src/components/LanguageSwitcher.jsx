@@ -8,6 +8,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Plus, Check } from "lucide-react";
 import { COURSES, courseOf } from "../data/translations.js";
+import Flag from "./Flag.jsx";
 
 export default function LanguageSwitcher({ data, styles, t = (k) => k, onSelect, onAddCourse }) {
   const [open, setOpen] = useState(false);
@@ -37,7 +38,7 @@ export default function LanguageSwitcher({ data, styles, t = (k) => k, onSelect,
         onClick={() => setOpen((v) => !v)}
         title={t("Cambiar idioma de estudio")}
       >
-        <span style={{ fontSize: 14 }}>{active.flag}</span>
+        <Flag code={active.code} size={16} />
         <span>{active.label}</span>
         <ChevronDown size={12} />
       </button>
@@ -65,7 +66,7 @@ export default function LanguageSwitcher({ data, styles, t = (k) => k, onSelect,
               }}
               onClick={() => { onSelect(c.code); setOpen(false); }}
             >
-              <span style={{ fontSize: 16 }}>{c.flag}</span>
+              <Flag code={c.code} size={18} />
               <span style={{ flex: 1 }}>{c.label}</span>
               {c.code === active.code && <Check size={14} color="#6FBF8B" />}
             </button>
@@ -88,7 +89,7 @@ export default function LanguageSwitcher({ data, styles, t = (k) => k, onSelect,
                   }}
                   onClick={() => { onAddCourse(c.code); setOpen(false); }}
                 >
-                  <span style={{ fontSize: 16 }}>{c.flag}</span>
+                  <Flag code={c.code} size={18} />
                   <span style={{ flex: 1 }}>{c.label}</span>
                   <Plus size={13} color="#8CC9D9" />
                 </button>
