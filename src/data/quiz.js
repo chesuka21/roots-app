@@ -126,6 +126,27 @@ const DE_BANK = {
     { q: "Ich rufe dich an, sobald ich ___.", options: ["ankomme", "ankam", "ankommen werde", "ankommen"], correct: 0 },
     { q: "Der Mann, ___ Auto rot ist, wohnt hier.", options: ["dessen", "deren", "das", "der"], correct: 0 },
   ],
+  B2: [
+    { q: "Wenn ich es gewusst hätte, hätte ich ___.", options: ["angerufen", "anrufen", "anrief", "anrufen würde"], correct: 0 },
+    { q: "Es ist Zeit, dass wir ___.", options: ["gehen", "gingen", "gehen werden", "gehen würden"], correct: 0 },
+    { q: "Das Haus, ___ wir sprechen, stammt aus dem 18. Jahrhundert.", options: ["über das", "das", "dessen", "wo"], correct: 0 },
+    { q: "Ich bezweifle, dass er recht ___.", options: ["hat", "habe", "haben wird", "hätte"], correct: 1 },
+    { q: "___ reich er auch ist, er ist nicht glücklich.", options: ["So", "Wie", "Alles", "Trotz"], correct: 0 },
+  ],
+  C1: [
+    { q: "___ die Ergebnisse da waren, begriff er die Wahrheit.", options: ["Kaum", "Sobald kaum", "Trotz dass", "Wann"], correct: 0 },
+    { q: "Er ist nicht so ___, den Vorschlag zu akzeptieren.", options: ["verrückt", "ein Verrückter", "viel verrückt", "wie verrückt"], correct: 0 },
+    { q: "Sein Rücktritt kam ___ dem Skandal.", options: ["im Gefolge von", "beim Erwachen von", "in der Wake von", "durch den Weck von"], correct: 0 },
+    { q: "___ er reich ist, ist er nicht glücklich.", options: ["Obwohl", "Dass", "Alles", "Trotz"], correct: 0 },
+    { q: "Er ist ___ der bestqualifizierteste Kandidat.", options: ["mit Abstand", "mit Langstrecke", "so weit", "weit weg"], correct: 0 },
+  ],
+  C2: [
+    { q: "Wählen Sie die formale Entsprechung von 'Aber es war teuer.'", options: ["Jedoch war es teuer.", "Und es war teuer.", "Also war es teuer.", "Weil es teuer war."], correct: 0 },
+    { q: "Wählen Sie den korrekten Cleft-Satz.", options: ["Was ich brauche, ist eine Pause.", "Was ich brauche, es ist eine Pause.", "Dass ich brauche, ist eine Pause.", "Was ich eine Pause brauche ist."], correct: 0 },
+    { q: "Seine Ausrede war ___ glaubwürdig.", options: ["alles andere als", "nichts als", "etwas als", "aber als"], correct: 0 },
+    { q: "Sie ist ___ die bestqualifizierteste Kandidatin.", options: ["bei weitem", "bei langer", "so weit", "weit weg"], correct: 0 },
+    { q: "___ reich er sein mag, er ist nicht glücklich.", options: ["So sehr", "Wie", "Alles", "Trotz"], correct: 0 },
+  ],
 };
 
 const IT_BANK = {
@@ -150,6 +171,27 @@ const IT_BANK = {
     { q: "Ti chiamerò appena ___.", options: ["arrivo", "arrivai", "arriverò", "arrivare"], correct: 0 },
     { q: "L'uomo ___ macchina è rossa abita qui.", options: ["la cui", "di cui la", "del quale", "che la"], correct: 2 },
   ],
+  B2: [
+    { q: "Se l'avessi saputo, avrei ___ prima.", options: ["chiamato", "chiamare", "chiamai", "chiamerei"], correct: 0 },
+    { q: "È ora che noi ___.", options: ["partiamo", "partissimo", "partiremo", "partiremmo"], correct: 0 },
+    { q: "La casa ___ si parla risale al XVIII secolo.", options: ["di cui", "che", "il cui", "dove"], correct: 0 },
+    { q: "Dubito che lui abbia ___.", options: ["ragione", "ragioni", "aver ragione", "avrà ragione"], correct: 0 },
+    { q: "___ sia ricco, non è felice.", options: ["Benché", "Che", "Tutto", "Nonostante di"], correct: 0 },
+  ],
+  C1: [
+    { q: "___ pubblicati i risultati, ha capito la verità.", options: ["Appena", "Poco appena", "Nonostante che", "Quando"], correct: 0 },
+    { q: "Non è così ___ di accettare la proposta.", options: ["pazzo", "un pazzo", "molto di pazzo", "quanto pazzo"], correct: 0 },
+    { q: "Le sue dimissioni sono arrivate ___ lo scandalo.", options: ["sulla scia di", "al risveglio di", "nella scia dal", "per la scia del"], correct: 0 },
+    { q: "___ sia ricco, non è felice.", options: ["Sebbene", "Che", "Tutto", "Nonostante"], correct: 0 },
+    { q: "Lei è ___ la candidata più qualificata.", options: ["di gran lunga", "di gran lungo", "così lontano", "lontano"], correct: 0 },
+  ],
+  C2: [
+    { q: "Scegli l'equivalente formale di «Ma era caro.»", options: ["Tuttavia, era caro.", "E era caro.", "Quindi era caro.", "Perché era caro."], correct: 0 },
+    { q: "Scegli la frase clivata corretta.", options: ["Ciò di cui ho bisogno è una pausa.", "Ciò che ho bisogno è di una pausa.", "Ciò che mi serve bisogno è una pausa.", "Ciò di cui ho bisogno è una pausa prendere."], correct: 0 },
+    { q: "La sua scusa era ___ credibile.", options: ["tutto fuorché", "niente oltre", "qualcosa oltre", "ma che"], correct: 0 },
+    { q: "Lei è ___ la candidata più qualificata.", options: ["di gran lunga", "di gran lungo", "così lontano", "lontano"], correct: 0 },
+    { q: "___ ricco che sia, non è felice.", options: ["Per quanto", "Che", "Tutto", "Nonostante"], correct: 0 },
+  ],
 };
 
 const PT_BANK = {
@@ -173,6 +215,27 @@ const PT_BANK = {
     { q: "O livro que eu ___ é apaixonante.", options: ["li", "ler", "leio", "lia"], correct: 0 },
     { q: "Vou te ligar assim que ___.", options: ["chegar", "cheguei", "chegarei", "chegando"], correct: 0 },
     { q: "É o filme ___ eu vi ontem.", options: ["que", "quem", "cujo", "onde"], correct: 0 },
+  ],
+  B2: [
+    { q: "Se eu soubesse, teria ___ antes.", options: ["ligado", "ligar", "ligaria", "ligue"], correct: 0 },
+    { q: "É hora de nós ___.", options: ["partirmos", "partimos", "partiremos", "partiríamos"], correct: 0 },
+    { q: "O livro ___ falaram é excelente.", options: ["de que", "que", "cujo", "onde"], correct: 0 },
+    { q: "Duvido que ele ___ razão.", options: ["tenha", "tem", "terá", "teria"], correct: 0 },
+    { q: "Embora ___ rico, não é feliz.", options: ["seja", "é", "será", "seria"], correct: 0 },
+  ],
+  C1: [
+    { q: "___ saído os resultados, ele entendeu a verdade.", options: ["Mal", "Logo que", "Apesar de", "Quando"], correct: 0 },
+    { q: "Ele não é ___ de aceitar a proposta.", options: ["tão louco", "tal louco", "muito de louco", "quanto louco"], correct: 0 },
+    { q: "A demissão veio ___ o escândalo.", options: ["na sequência de", "no despertar de", "na esteira pelo", "pelo rastro de"], correct: 0 },
+    { q: "___ seja rico, não é feliz.", options: ["Embora", "Que", "Todo", "Apesar"], correct: 0 },
+    { q: "___ ricos que sejam, não são felizes.", options: ["Por mais", "Por quanto", "Tudo", "Apesar"], correct: 0 },
+  ],
+  C2: [
+    { q: "Escolha o equivalente formal de 'Mas era caro.'", options: ["No entanto, era caro.", "E era caro.", "Logo era caro.", "Porque era caro."], correct: 0 },
+    { q: "Escolha a frase clivada correta.", options: ["Do que preciso é de uma pausa.", "Que eu preciso, é de uma pausa.", "Do que preciso, é pausa tirar.", "O que preciso é de uma pausa."], correct: 3 },
+    { q: "A desculpa dele era ___ crível.", options: ["tudo menos", "nada além", "alguma coisa além", "mas que"], correct: 0 },
+    { q: "Ela é ___ a candidata mais qualificada.", options: ["de longe", "de longo", "por agora", "longe"], correct: 0 },
+    { q: "___ rico que seja, não é feliz.", options: ["Por mais", "Que", "Todo", "Apesar"], correct: 0 },
   ],
 };
 
