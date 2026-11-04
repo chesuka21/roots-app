@@ -4,7 +4,7 @@ import LanguageGate from "./components/LanguageGate.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud, deleteLanguageCloudData } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, Languages, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
+import { Sprout, Languages, MessageSquare, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
 import Onboarding from "./components/Onboarding.jsx";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN, verbForms } from "./data/wordbank.js";
 import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
@@ -345,6 +345,35 @@ Rules:
 
   return callClaudeJson(prompt, 1000);
   }
+
+/* ---------- Enriquecimiento EN LOTE (Suggest Word → "Add selected") ----------
+   Una sola llamada a la IA para N palabras nuevas: categoría gramatical,
+   definición simple en el idioma de estudio + traducción, categoría temática,
+   imageSearchQuery (escena fotografi able) y frames. Evita que las palabras
+   seleccionadas en lote entren al mapa vacías ("custom", def "", sin imagen).
+   El banco local (WORDBANK_EN) se consulta ANTES y no gasta tokens.          */
+async function enrichWordsBulk(terms, existingWords, targetLang = "en") {
+  const langName = { en: "English", fr: "French", de: "German", it: "Italian", pt: "Portuguese", es: "Spanish" }[targetLang] || "English";
+  const list = terms.map((t) => `"${t}"`).join(", ");
+  const known = existingWords.map((w) => w.en).join(", ");
+  const prompt = `The learner is studying ${langName} and just picked these words to add to their vocabulary map: ${list}
+Existing words already in their network (context only): ${known || "(none yet)"}
+
+Return ONLY valid JSON, no markdown fences, no extra text, in exactly this shape:
+{"words":[{"word":"<exact word from the list>","definition":"...","definitionEs":"...","category":"...","partOfSpeech":"noun|verb|adjective|adverb|phrasal verb|idiom","imageSearchQuery":"...","sentenceFrames":[{"frame":"...","es":"..."}],"connections":[{"word":"<an existing word from the context list>","sentence":"..."}]}]}
+
+Rules:
+- EXACTLY one entry per word from the list, same order and same spelling.
+- "definition": a simple ${langName} definition for a beginner, under 14 words, common everyday words. Write it in ${langName} (the language being studied). Never repeat the word inside its own definition.
+- "definitionEs": natural Spanish translation of that definition.
+- "category": ONE lowercase English topic word (school, food, feelings, work, nature, travel, home, health, sport, music, technology, family, time, body, clothes, money, city, weather, animals, communication, business, art).
+- "partOfSpeech": one of noun, verb, adjective, adverb, phrasal verb, idiom — whichever fits best.
+- "imageSearchQuery": a visual, CONCRETE, PHOTOGRAPHABLE scene in English (3-7 words) showing the meaning — no text, letters or signs, no abstract concepts. Describe what a camera would see. Example: "borrow" -> "person borrowing a book in library"; "eager" -> "excited child waiting at birthday party".
+- "sentenceFrames": 1 to 3 natural ${langName} sentence templates where the word fits (mark OTHER words with ____; write the word itself out). "es" is the Spanish translation.
+- "connections": 0 to 2 words FROM THE CONTEXT LIST that genuinely relate in meaning; one short ${langName} sentence using both. Empty array if nothing relates.
+- Never use double-quote characters inside any value — use single quotes instead.`;
+  return callClaudeJson(prompt, Math.min(3000, 320 * Math.max(1, terms.length) + 400));
+}
 
   /* Búsqueda/conexiones con el diccionario local (ahorro de tokens):
      si la palabra está en el banco offline, la definición, la traducción y la
@@ -944,6 +973,29 @@ function pickQuizQuestion(rung, asked, targetLang = "en") {
      las PREGUNTAS se evalúan en target_language activo (BANKS de quiz.js). */
 /* Instrucciones i18n y helpers del quiz viven en src/data/quiz.js (import arriba). */
 
+
+/* ---------- Lookup: placeholders por idioma ----------
+   El ejemplo de "¿cómo se llama?" va en el IDIOMA NATIVO del usuario; el de la
+   frase escuchada va como expresión idiomática del IDIOMA OBJETIVO activo. */
+const LOOKUP_WORD_EXAMPLE = {
+  es: "Cómo se llama la hija de mi hermana",
+  en: "What do you call my sister's daughter?",
+  fr: "Comment dit-on la fille de ma sœur",
+  de: "Wie heißt die Tochter meiner Schwester?",
+  pt: "Como se chama a filha da minha irmã?",
+  it: "Come si chiama la figlia di mia sorella?",
+};
+const LOOKUP_PHRASE_EXAMPLE = {
+  en: "it cost an arm and a leg",
+  fr: "coûter les yeux de la tête",
+  de: "es kostet Hals und Kragen",
+  it: "costare un occhio della testa",
+  pt: "custar os olhos da cara",
+  es: "costar un ojo de la cara",
+};
+const lookupWordPlaceholder = (native) => LOOKUP_WORD_EXAMPLE[native] || LOOKUP_WORD_EXAMPLE.es;
+const lookupPhrasePlaceholder = (target) => LOOKUP_PHRASE_EXAMPLE[target] || LOOKUP_PHRASE_EXAMPLE.en;
+
 /* ---------- Component ---------- */
 const SpinCSS = () => (
   <style>{`.spin { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes xpPop { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
@@ -966,6 +1018,7 @@ export default function VocabGraph() {
   const [phraseBusy, setPhraseBusy] = useState(false);
   const [phraseResult, setPhraseResult] = useState(null);
   const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestSaving, setSuggestSaving] = useState(false); // enriquecimiento + guardado en lote
   const [suggestResults, setSuggestResults] = useState(null);
   const [suggestChecked, setSuggestChecked] = useState(new Set());
   const [suggestBatch, setSuggestBatch] = useState([]);
@@ -3279,7 +3332,7 @@ export default function VocabGraph() {
                     <p style={styles.bridgeNote}>{reviewCheckResult.note}</p>
                   </div>
                 )}
-                {reviewChecking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+                {reviewChecking && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
 
                 {(legacyTier === "beginner" || reviewCheckResult) && (
                   <>
@@ -3638,13 +3691,13 @@ export default function VocabGraph() {
                     setData((prev) => ({ ...prev, suggestSeen: [...new Set(newSeen)] }));
                     setSuggestResults(result.suggestions || []);
                   } catch (e) {
-                    setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
+                    setSuggestResults([{ word: "", why: `${t("No pude obtener sugerencias")}: ${e.message || e}` }]);
                   }
                   setSuggestBusy(false);
                 }}
               >
                 {suggestBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-                {suggestBusy ? "Thinking…" : suggestResults ? "Suggest again" : "Suggest words for me"}
+                {suggestBusy ? t("Pensando…") : suggestResults ? t("Sugerir de nuevo") : t("Sugiéreme palabras")}
               </button>
               {/* Checkboxes para agregar varias de una vez */}
               {suggestResults && suggestResults.length > 0 && suggestResults[0].word && (
@@ -3671,75 +3724,145 @@ export default function VocabGraph() {
                   )}
                   <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
                     <button
-                      style={styles.genBtn}
-                      disabled={suggestChecked.size === 0}
-                      onClick={() => {
-                        if (suggestChecked.size >= 1) {
-                          const words = [...suggestChecked];
-                          // ── Bulk insert: TODAS las seleccionadas entran al mapa en
-                          // UNA sola operación (un setData con todos los nodos) — no
-                          // solo la primera. Los pattern links se crean para cada una.
-                          const userCefr = data.cefr || TIER_TO_CEFR[data.level] || "A2";
-                          setData((prev) => {
-                            const nodes = { ...prev.nodes };
-                            const freshIds = []; // solo las NUEVAS (no duplicadas) ganan XP
-                            for (const w of words) {
+                      style={{ ...styles.genBtn, opacity: suggestSaving ? 0.65 : 1 }}
+                      disabled={suggestChecked.size === 0 || suggestSaving}
+                      onClick={async () => {
+                        if (suggestChecked.size < 1 || suggestSaving) return;
+                        const words = [...suggestChecked];
+                        setSuggestSaving(true);
+                        /* ── ENRIQUECIMIENTO ANTES DE GUARDAR (fix bulk insert) ──
+                           Antes cada palabra entraba vacía (cat "custom", def "", sin
+                           imagen, sin aristas). Ahora, para cada seleccionada:
+                           a) banco local WORDBANK (0 tokens) → pos/cat/def/defEs
+                           b) las que no están en el banco → UNA llamada IA en lote
+                              (enrichWordsBulk) → pos/cat/def/defEs/imageSearchQuery/frames
+                           c) imagen real de Unsplash con la escena (imageSearchQuery)
+                           d) aristas: conexiones IA + patrón CEFR + auto-link local */
+                        let enriched = {};   // id → { def, defEs, cat, pos, images, sentenceFrames, imageSearchQuery, verbForms }
+                        try {
+                          // a) banco local
+                          const pending = [];
+                          for (const w of words) {
+                            const hit = lookupLocalWord(w);
+                            if (hit) {
                               const id = w.toLowerCase().replace(/\s+/g, "-");
-                              if (nodes[id]) continue; // ya existe — no duplicar
-                              freshIds.push(id);
-                              nodes[id] = {
-                                id,
-                                en: w,
-                                def: "",            // sin IA: definición opcional, se edita después
-                                defEs: "",
-                                cat: "custom",
-                                pos: null,
-                                images: [],
-                                standalone: w,
-                                userExamples: [],
+                              enriched[id] = {
+                                def: hit.def || "", defEs: hit.defEs || "",
+                                cat: hit.cat || "custom", pos: hit.pos || null,
+                                images: [], sentenceFrames: [], imageSearchQuery: "",
+                              };
+                            } else pending.push(w);
+                          }
+                          // b) IA en lote para las desconocidas
+                          if (pending.length) {
+                            let bulk = null;
+                            try {
+                              const existing = Object.values(data.nodes || {}).filter((n) => n && n.kind !== "pattern");
+                              bulk = await enrichWordsBulk(pending, existing, data.targetLanguage || "en");
+                            } catch (e) { /* sin IA: entran editables, no se bloquea el guardado */ }
+                            const byWord = {};
+                            for (const it of (bulk?.words || [])) {
+                              if (it && it.word) byWord[String(it.word).trim().toLowerCase()] = it;
+                            }
+                            for (const w of pending) {
+                              const it = byWord[w.trim().toLowerCase()] || {};
+                              const id = w.toLowerCase().replace(/\s+/g, "-");
+                              enriched[id] = {
+                                def: it.definition || "", defEs: it.definitionEs || "",
+                                cat: (it.category || "custom").toLowerCase(),
+                                pos: it.partOfSpeech || null,
+                                images: [], sentenceFrames: it.sentenceFrames || [],
+                                imageSearchQuery: it.imageSearchQuery || "",
+                                aiConnections: it.connections || [],
                               };
                             }
-                            // pattern links para cada palabra nueva (techo CEFR)
-                            const newEdges = [...prev.edges];
-                            for (const w of words) {
-                              const id = w.toLowerCase().replace(/\s+/g, "-");
-                              if (!nodes[id] || nodes[id].cat !== "custom") continue;
-                              for (const e of linkWordToPatterns(nodes[id], userCefr)) {
-                                if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
-                              }
+                          }
+                          // c) imágenes (Unsplash con la escena concreta) en paralelo
+                          await Promise.all(words.map(async (w) => {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            const item = enriched[id] || (enriched[id] = { images: [] });
+                            try {
+                              item.images = await findImages(item.imageSearchQuery || w, w);
+                            } catch (e) { item.images = []; }
+                          }));
+                        } catch (e) { /* el guardado continúa con lo que haya */ }
+
+                        const userCefr = data.cefr || TIER_TO_CEFR[data.level] || "A2";
+                        setData((prev) => {
+                          const nodes = { ...prev.nodes };
+                          const freshIds = [];
+                          const connSeeds = []; // conexiones IA (se resuelven contra los ids reales)
+                          for (const w of words) {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            if (nodes[id]) continue;
+                            const e = enriched[id] || {};
+                            freshIds.push(id);
+                            nodes[id] = {
+                              id,
+                              en: w,
+                              def: e.def || "",
+                              defEs: e.defEs || "",
+                              cat: e.cat || "custom",
+                              pos: e.pos || null,          // partOfSpeech de la IA/banco local
+                              tags: e.pos ? [String(e.pos).toLowerCase()] : undefined,
+                              imageSearchQuery: e.imageSearchQuery || "",
+                              images: e.images || [],
+                              sentenceFrames: e.sentenceFrames || [],
+                              verbForms: (e.pos === "verb" || e.pos === "phrasal verb") ? verbForms(w) : null,
+                              standalone: w,
+                              userExamples: [],
+                            };
+                            if (e.aiConnections?.length) connSeeds.push({ id, list: e.aiConnections });
+                          }
+                          const newEdges = [...prev.edges];
+                          // pattern links (techo CEFR) — para TODAS las nuevas, tengan o no categoría IA
+                          for (const w of words) {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            if (!nodes[id] || !freshIds.includes(id)) continue;
+                            for (const e of linkWordToPatterns(nodes[id], userCefr)) {
+                              if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
                             }
-                            // ── AUTO-LINKING (bulk Suggest): 1-3 aristas automáticas por
-                            // palabra nueva hacia lo más afín del mapa (0 tokens) ──
-                            for (const w of words) {
-                              const id = w.toLowerCase().replace(/\s+/g, "-");
-                              if (!nodes[id]) continue;
-                              for (const e of autoLinkNewWord(nodes[id], nodes, newEdges, 3)) {
-                                if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
-                              }
+                          }
+                          // aristas IA (semánticas) hacia palabras ya existentes
+                          const byName = {};
+                          for (const n of Object.values(nodes)) if (n && n.en) byName[n.en.toLowerCase()] = n.id;
+                          for (const seed of connSeeds) {
+                            for (const c of seed.list) {
+                              const targetId = byName[String(c.word || "").trim().toLowerCase()];
+                              if (!targetId || targetId === seed.id) continue;
+                              if (newEdges.some((x) => (x.source === seed.id && x.target === targetId) || (x.source === targetId && x.target === seed.id))) continue;
+                              newEdges.push({ source: seed.id, target: targetId, sentence: c.sentence || "", rel: "auto-ai" });
                             }
-                            // ── Gamificación (bulk): XP por cada palabra NUEVA (×multiplier
-                            // del nivel) + racha activada + SRS inicial para que aparezcan
-                            // en el Review (mismo trato que markLearned, en batch) ──
-                            const mult = levelMultiplier(prev.level);
-                            const gained = Math.round(XP.learnWord * mult) * freshIds.length;
-                            let progression = prev.progression || initProgression();
-                            if (freshIds.length) {
-                              showXpToast(gained);
-                              progression = earnXp(progression, gained);
-                              progression = bumpStreak(progression);
+                          }
+                          // AUTO-LINKING (bulk): 1-3 aristas por palabra nueva hacia lo más afín
+                          for (const w of words) {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            if (!nodes[id]) continue;
+                            for (const e of autoLinkNewWord(nodes[id], nodes, newEdges, 3)) {
+                              if (!newEdges.some((x) => x.source === e.source && x.target === e.target && x.rel === e.rel)) newEdges.push(e);
                             }
-                            const srs = { ...(prev.srs || {}) };
-                            for (const id of freshIds) if (!srs[id]) srs[id] = initSrs();
-                            return { ...prev, nodes, edges: newEdges, srs, progression, learned: [...new Set([...prev.learned, ...freshIds])] };
-                          });
-                          setSuggestResults(null);
-                          setSuggestChecked(new Set());
-                          setSuggestBatch([]);
-                          setActiveTab("map");
-                        }
+                          }
+                          const mult = levelMultiplier(prev.level);
+                          const gained = Math.round(XP.learnWord * mult) * freshIds.length;
+                          let progression = prev.progression || initProgression();
+                          if (freshIds.length) {
+                            showXpToast(gained);
+                            progression = earnXp(progression, gained);
+                            progression = bumpStreak(progression);
+                          }
+                          const srs = { ...(prev.srs || {}) };
+                          for (const id of freshIds) if (!srs[id]) srs[id] = initSrs();
+                          return { ...prev, nodes, edges: newEdges, srs, progression, learned: [...new Set([...prev.learned, ...freshIds])] };
+                        });
+                        setSuggestResults(null);
+                        setSuggestChecked(new Set());
+                        setSuggestBatch([]);
+                        setSuggestSaving(false);
+                        setActiveTab("map");
                       }}
                     >
-                      <Check size={14} /> Add selected ({suggestChecked.size})
+                      {suggestSaving ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+                      {suggestSaving ? t("Enriqueciendo…") : <>{t("Agregar seleccionadas")} ({suggestChecked.size})</>}
                     </button>
                     <button
                       style={{ ...styles.genBtn, background: "transparent", border: "1px solid #2d3d33" }}
@@ -3760,7 +3883,7 @@ export default function VocabGraph() {
                           setSuggestResults(result.suggestions || []);
                           setSuggestBusy(false);
                         }).catch((e) => {
-                          setSuggestResults([{ word: "", why: `Couldn't get suggestions: ${e.message || e}` }]);
+                          setSuggestResults([{ word: "", why: `${t("No pude obtener sugerencias")}: ${e.message || e}` }]);
                           setSuggestBusy(false);
                         });
                       }}
@@ -3771,7 +3894,7 @@ export default function VocabGraph() {
                   {/* Aviso si hay palabras en cola después de seleccionar varias */}
                   {suggestBatch.length > 0 && (
                     <p style={{ ...styles.formHint, marginTop: 6, color: "#9fd9b8" }}>
-                      Also add later: {suggestBatch.join(", ")}
+                      {t("Agregar más tarde")}: {suggestBatch.join(", ")}
                     </p>
                   )}
                 </div>
@@ -3786,7 +3909,7 @@ export default function VocabGraph() {
             {generating ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
             {generating ? "Generating…" : "Generate definition & connections"}
           </button>
-          {generating && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+          {generating && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
           {genError && <p style={styles.genError}>{genError}</p>}
 
           <label style={styles.label}>Simple definition</label>
@@ -3874,14 +3997,14 @@ export default function VocabGraph() {
       {activeTab === "lookup" && (
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}><Search size={18} color="#9fd9b8" style={{ verticalAlign: "-3px", marginRight: 7 }} /> Lookup</h2>
-          <p style={styles.formHint}>Two tools: find the word you're missing, or make sense of something you heard.</p>
+          <p style={styles.formHint}>{t("Dos herramientas: encuentra la palabra que te falta, o entiende algo que escuchaste.")}</p>
 
-          <label style={styles.label}>What's the word? Describe what you mean</label>
+          <label style={styles.label}>{t("¿Cómo se llama? Describe lo que quieres decir")}</label>
           <input
             style={styles.input}
             value={lookupText}
             onChange={(e) => { setLookupText(e.target.value); setLookupResults(null); }}
-            placeholder='e.g. "Cómo se llama la hija de mi hermana"'
+            placeholder={`e.g. "${lookupWordPlaceholder(data.profile?.native_language || uiLang)}"`}
           />
           <button
             style={styles.genBtn}
@@ -3893,15 +4016,15 @@ export default function VocabGraph() {
                 const result = await findWordForDescription(lookupText.trim());
                 setLookupResults(result.words || []);
               } catch (e) {
-                setLookupResults([{ word: "", why: `Couldn't look that up: ${e.message || e}` }]);
+                setLookupResults([{ word: "", why: `${t("No pude buscarlo")}: ${e.message || e}` }]);
               }
               setLookupBusy(false);
             }}
           >
             {lookupBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-            {lookupBusy ? "Thinking…" : "What's the word?"}
+            {lookupBusy ? t("Pensando…") : t("What's the word?")}
           </button>
-          {lookupBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+          {lookupBusy && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
           {lookupResults && lookupResults.map((r, i) => (
             r.word ? (
               <button
@@ -3924,12 +4047,12 @@ export default function VocabGraph() {
 
           <div style={styles.lookupDivider} />
 
-          <label style={styles.label}>Heard a phrase and didn't get it? Paste it here</label>
+          <label style={styles.label}>{t("¿Escuchaste una frase y no la entendiste? Pégala aquí")}</label>
           <input
             style={styles.input}
             value={phraseText}
             onChange={(e) => { setPhraseText(e.target.value); setPhraseResult(null); }}
-            placeholder='e.g. "it cost an arm and a leg"'
+            placeholder={`e.g. "${lookupPhrasePlaceholder(data.targetLanguage || "en")}"`}
           />
           <button
             style={styles.genBtn}
@@ -3941,18 +4064,18 @@ export default function VocabGraph() {
                 const result = await explainPhrase(phraseText.trim());
                 setPhraseResult(result);
               } catch (e) {
-                setPhraseResult({ meaning: `Couldn't check that: ${e.message || e}`, meaningEs: "", idiomatic: false });
+                setPhraseResult({ meaning: `${t("No pude revisarlo")}: ${e.message || e}`, meaningEs: "", idiomatic: false });
               }
               setPhraseBusy(false);
             }}
           >
             {phraseBusy ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-            {phraseBusy ? "Thinking…" : "What does this mean?"}
+            {phraseBusy ? t("Pensando…") : t("¿Qué significa esto?")}
           </button>
-          {phraseBusy && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+          {phraseBusy && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
           {phraseResult && (
             <div style={styles.exampleBox}>
-              {phraseResult.idiomatic && <p style={styles.mineNote}>💬 idiomatic — not literal</p>}
+              {phraseResult.idiomatic && <p style={styles.mineNote}><MessageSquare size={11} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("idiomático — no literal")}</p>}
               <p style={styles.exampleEn}>{phraseResult.meaning}</p>
               {phraseResult.meaningEs && <p style={styles.translationText}>{phraseResult.meaningEs}</p>}
               {phraseResult.meaning && !phraseResult.meaning.startsWith("Couldn't") && (
@@ -3965,7 +4088,7 @@ export default function VocabGraph() {
                     setActiveTab("add");
                   }}
                 >
-                  <Plus size={13} /> Add this phrase to my map
+                  <Plus size={13} /> {t("Agregar esta frase a mi mapa")}
                 </button>
               )}
             </div>
@@ -4357,7 +4480,7 @@ export default function VocabGraph() {
                     {checking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
                     {checking ? "Checking…" : "Check my sentence"}
                   </button>
-                  {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+                  {checking && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
                   {checkResult && (
                     <div style={styles.exampleBox}>
                       {checkResult.correct ? (
@@ -4435,7 +4558,7 @@ export default function VocabGraph() {
                         <p style={styles.bridgeNote}>{checkResult.note}</p>
                       </div>
                     )}
-                    {checking && <p style={styles.formHint}>The free tier can take up to 30–40s when it's busy — hang tight.</p>}
+                    {checking && <p style={styles.formHint}>{t("El plan gratuito puede tardar 30–40s cuando está ocupado — paciencia.")}</p>}
 
                     {checkResult && (
                       <button style={styles.learnBtn} onClick={() => markLearned(w.id)}>
