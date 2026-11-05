@@ -3874,6 +3874,9 @@ export default function VocabGraph() {
                               images: e.images || [],
                               sentenceFrames: e.sentenceFrames || [],
                               verbForms: (e.pos === "verb" || e.pos === "phrasal verb") ? verbForms(w) : null,
+                              // Honestidad de datos: si ni el banco ni la IA dieron definición,
+                              // se marca para poder regenerarla (no se inventa una falsa).
+                              needsDef: !e.def || undefined,
                               standalone: w,
                               userExamples: [],
                             };
