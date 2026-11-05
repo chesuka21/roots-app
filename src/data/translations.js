@@ -259,6 +259,13 @@ export const TRANSLATIONS = {
     "Sugiéreme palabras": "Suggest words for me",
     "No pude obtener sugerencias": "Couldn't get suggestions",
     "Agregar más tarde": "Also add later",
+    "Nivel de este curso": "This course's level",
+    "Sin evaluar": "Not assessed",
+    "Hoy": "Today",
+    "Hoy: pendiente": "Today: pending",
+    "repasos hoy en este curso": "reviews today in this course",
+    "Aún no practicas este idioma hoy": "You haven't practiced this language today yet",
+    "Perfil (global)": "Profile (global)",
   },
   es: {
     // — navegación —
@@ -509,6 +516,13 @@ export const TRANSLATIONS = {
     "Sugiéreme palabras": "Sugiéreme palabras",
     "No pude obtener sugerencias": "No pude obtener sugerencias",
     "Agregar más tarde": "Agregar más tarde",
+    "Nivel de este curso": "Nivel de este curso",
+    "Sin evaluar": "Sin evaluar",
+    "Hoy": "Hoy",
+    "Hoy: pendiente": "Hoy: pendiente",
+    "repasos hoy en este curso": "repasos hoy en este curso",
+    "Aún no practicas este idioma hoy": "Aún no practicas este idioma hoy",
+    "Perfil (global)": "Perfil (global)",
   },
   fr: {
     // — navigation —
@@ -759,6 +773,13 @@ export const TRANSLATIONS = {
     "Sugiéreme palabras": "Suggère-moi des mots",
     "No pude obtener sugerencias": "Je n'ai pas pu obtenir de suggestions",
     "Agregar más tarde": "Ajouter plus tard",
+    "Nivel de este curso": "Niveau de ce cours",
+    "Sin evaluar": "Non évalué",
+    "Hoy": "Aujourd'hui",
+    "Hoy: pendiente": "Aujourd'hui : en attente",
+    "repasos hoy en este curso": "révisions aujourd'hui dans ce cours",
+    "Aún no practicas este idioma hoy": "Tu n'as pas encore pratiqué cette langue aujourd'hui",
+    "Perfil (global)": "Profil (global)",
   },
   de: {
     // — Navigation —
@@ -1009,6 +1030,13 @@ export const TRANSLATIONS = {
     "Sugiéreme palabras": "Schlage mir Wörter vor",
     "No pude obtener sugerencias": "Konnte keine Vorschläge erhalten",
     "Agregar más tarde": "Später hinzufügen",
+    "Nivel de este curso": "Niveau dieses Kurses",
+    "Sin evaluar": "Nicht bewertet",
+    "Hoy": "Heute",
+    "Hoy: pendiente": "Heute: offen",
+    "repasos hoy en este curso": "Wiederholungen heute in diesem Kurs",
+    "Aún no practicas este idioma hoy": "Du hast diese Sprache heute noch nicht geübt",
+    "Perfil (global)": "Profil (global)",
   },
   pt: {
     // — navegação —
@@ -1259,6 +1287,13 @@ export const TRANSLATIONS = {
     "Sugiéreme palabras": "Sugira palavras para mim",
     "No pude obtener sugerencias": "Não consegui obter sugestões",
     "Agregar más tarde": "Adicionar mais tarde",
+    "Nivel de este curso": "Nível deste curso",
+    "Sin evaluar": "Não avaliado",
+    "Hoy": "Hoje",
+    "Hoy: pendiente": "Hoje: pendente",
+    "repasos hoy en este curso": "revisões hoje neste curso",
+    "Aún no practicas este idioma hoy": "Você ainda não praticou este idioma hoje",
+    "Perfil (global)": "Perfil (global)",
   },
 };
 

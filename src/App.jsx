@@ -4,7 +4,7 @@ import LanguageGate from "./components/LanguageGate.jsx";
 import { isCloudEnabled, getSession, onAuthChange, signOut, syncAllToCloud, pullAllFromCloud, deleteLanguageCloudData } from "./lib/supabaseClient.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Sprout, Languages, MessageSquare, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
+import { Sprout, Languages, MessageSquare, Clock, GraduationCap, X, Check, ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Loader2, Layers, BookOpen, Utensils, Smile, Briefcase, TreePine, Shapes, Volume2, Pencil, Trash2, Settings, Map as MapIcon, Search, RotateCcw, Flame, Waves, Repeat, BookA, Quote, Play, LogIn, LogOut, Trophy, Zap, FlaskConical } from "lucide-react";
 import Onboarding from "./components/Onboarding.jsx";
 import { lookupLocalWord, wordsByCategory, WORDBANK_EN, verbForms } from "./data/wordbank.js";
 import { translate, SUPPORTED_LANGUAGES, languageLabel } from "./data/translations.js";
@@ -18,6 +18,7 @@ import { PATTERN_NODES, TIER_TO_CEFR, CEFR_ORDER, cefrIndex, cefrTier, resolveUs
 /* Servicio centralizado de IA: capa separada en src/lib/ai.js (cache, reparación
    JSON, multi-proveedor). Los componentes importan desde ahí — sin duplicación inline. */
 import { callClaudeJson } from "./lib/ai.js";
+import { inferPosLocal, inferCategoryLocal } from "./lib/enrichLocal.js";
 import SentenceLab from "./components/sandbox/SentenceLab.jsx";
 import WordToken from "./components/WordToken.jsx";
 import { autoLinkNewWord, recalculateEdgesFor, edgeWidth, maturityPhase, aiSuggestConnections } from "./lib/edgeEngine.js";
@@ -2378,16 +2379,36 @@ export default function VocabGraph() {
                     onSelect={switchTargetLanguage}
                     onAddCourse={addTargetCourse}
                   />
+                  {/* ── AISLAMIENTO POR CURSO: nivel CEFR del idioma ACTIVO (nunca
+                        heredado del curso anterior) + actividad de hoy de ESTE curso ── */}
+                  <span
+                    style={{ ...styles.cloudBadge, color: data.cefr ? "#9fd9b8" : "#8a9490" }}
+                    title={`${t("Nivel de este curso")}: ${data.cefr || t("Sin evaluar")} · ${totalCount} ${t("palabras")}`}
+                  >
+                    <GraduationCap size={11} style={{ verticalAlign: "-1px" }} /> {data.cefr || t("Sin evaluar")} · {totalCount}
+                  </span>
+                  <span
+                    style={{ ...styles.cloudBadge, color: doneToday > 0 ? "#9fd9b8" : "#d9a441" }}
+                    title={doneToday > 0
+                      ? `${doneToday} ${t("repasos hoy en este curso")}`
+                      : t("Aún no practicas este idioma hoy")}
+                  >
+                    {doneToday > 0
+                      ? <><Check size={11} style={{ verticalAlign: "-1px" }} /> {t("Hoy")} {doneToday}</>
+                      : <><Clock size={11} style={{ verticalAlign: "-1px" }} /> {t("Hoy: pendiente")}</>}
+                  </span>
                   <button style={styles.gearBtn} onClick={() => setShowSettings(true)} title="Ajustes de voz">
                     <Settings size={20} color="#8CA9C9" strokeWidth={1.8} />
                   </button>
                   </div>
                   <div style={styles.gamifyRow}>
-                                      <span style={streakDead ? styles.streakBadgeDead : streakAtRisk ? styles.streakBadgeRisk : styles.streakBadge} title={(streakDead ? `Perdiste tu racha de ${streakCurrent} días. Mejor: ${streakBest}.` : `Racha actual ${streakCurrent} días · mejor ${streakBest}`)}>
+                                      <span style={streakDead ? styles.streakBadgeDead : streakAtRisk ? styles.streakBadgeRisk : styles.streakBadge} title={(streakDead ? `Perdiste tu racha de ${streakCurrent} días. Mejor: ${streakBest}.` : `Racha actual ${streakCurrent} días · mejor ${streakBest} (GLOBAL: cualquier idioma suma)`)}>
                                         <Flame size={11} style={{ verticalAlign: "-1px" }} /> {streakCurrent}
                                       </span>
-                    <span style={styles.xpBadge} title={`${xp} XP · nivel ${xpLevel}`}>
-                      <Zap size={11} style={{ verticalAlign: "-1px" }} /> Lv {xpLevel}
+                    {/* Nota: Lv/XP/racha son GLOBALES del perfil (suman con cualquier idioma);
+                        el nivel CEFR y la actividad de hoy son POR CURSO (badges de arriba). */}
+                    <span style={styles.xpBadge} title={`${t("Perfil (global)")}: ${xp} XP · ${t("nivel")} ${xpLevel}`}>
+                      <Zap size={11} style={{ verticalAlign: "-1px" }} /> {t("Perfil")} Lv {xpLevel}
                     </span>
                     {/* ── LEVEL UP: badge 🎓 cuando los hitos del nivel están cumplidos ── */}
                     {(() => {
@@ -3777,7 +3798,41 @@ export default function VocabGraph() {
                               };
                             }
                           }
-                          // c) imágenes (Unsplash con la escena concreta) en paralelo
+                          // c) TERCER ESLABÓN OBLIGATORIO: si el bulk no resolvió una
+                          //    palabra (IA caída/timeout), generateWordDetailsSmart
+                          //    por palabra (banco local → IA) — el usuario pidió que
+                          //    esto sea obligatorio antes de insertar.
+                          const stillPending = words.filter((w) => {
+                            const item = enriched[w.toLowerCase().replace(/\s+/g, "-")];
+                            return !item || !item.def || !item.pos;
+                          }).slice(0, 6); // techo: no encadenar llamadas sin límite
+                          for (const w of stillPending) {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            try {
+                              const existing = Object.values(data.nodes || {}).filter((n) => n && n.kind !== "pattern");
+                              const { details } = await generateWordDetailsSmart(w, existing, data.targetLanguage || "en");
+                              const item = enriched[id] || (enriched[id] = {});
+                              item.def = item.def || details?.definition || "";
+                              item.defEs = item.defEs || details?.definitionEs || "";
+                              item.cat = (item.cat && item.cat !== "custom") ? item.cat : (details?.category || item.cat);
+                              item.pos = item.pos || details?.partOfSpeech || null;
+                              item.imageSearchQuery = item.imageSearchQuery || details?.imageSearchQuery || "";
+                              if (!item.sentenceFrames?.length) item.sentenceFrames = details?.sentenceFrames || [];
+                              if (!item.aiConnections?.length && details?.connections?.length) {
+                                item.aiConnections = details.connections.map((c) => ({ word: c.word, sentence: c.sentence }));
+                              }
+                            } catch (e) { /* se aplica el fallback local de abajo */ }
+                          }
+                          // d) ÚLTIMO ESLABÓN (0 tokens, determinista): inferir POS y
+                          //    categoría localmente para que NUNCA quede vacío.
+                          for (const w of words) {
+                            const id = w.toLowerCase().replace(/\s+/g, "-");
+                            const item = enriched[id] || (enriched[id] = {});
+                            if (!item.pos) item.pos = inferPosLocal(w);
+                            if (!item.cat || item.cat === "custom") item.cat = inferCategoryLocal(w);
+                            if (!item.imageSearchQuery) item.imageSearchQuery = w;
+                          }
+                          // e) imágenes (Unsplash con la escena concreta) en paralelo
                           await Promise.all(words.map(async (w) => {
                             const id = w.toLowerCase().replace(/\s+/g, "-");
                             const item = enriched[id] || (enriched[id] = { images: [] });
@@ -3786,6 +3841,16 @@ export default function VocabGraph() {
                             } catch (e) { item.images = []; }
                           }));
                         } catch (e) { /* el guardado continúa con lo que haya */ }
+                        // Red de seguridad: nada entra sin pos/cat/query aunque el bloque
+                        // anterior haya lanzado (el try/catch externo no debe dejar vacíos)
+                        for (const w of words) {
+                          const id = w.toLowerCase().replace(/\s+/g, "-");
+                          const item = enriched[id] || (enriched[id] = {});
+                          if (!item.pos) item.pos = inferPosLocal(w);
+                          if (!item.cat || item.cat === "custom") item.cat = inferCategoryLocal(w);
+                          if (!item.imageSearchQuery) item.imageSearchQuery = w;
+                          if (!item.images) item.images = [];
+                        }
 
                         const userCefr = data.cefr || TIER_TO_CEFR[data.level] || "A2";
                         setData((prev) => {
@@ -4064,7 +4129,7 @@ export default function VocabGraph() {
                 const result = await explainPhrase(phraseText.trim());
                 setPhraseResult(result);
               } catch (e) {
-                setPhraseResult({ meaning: `${t("No pude revisarlo")}: ${e.message || e}`, meaningEs: "", idiomatic: false });
+                setPhraseResult({ meaning: `${t("No pude revisarlo")}: ${e.message || e}`, meaningEs: "", idiomatic: false, error: true });
               }
               setPhraseBusy(false);
             }}
@@ -4078,7 +4143,7 @@ export default function VocabGraph() {
               {phraseResult.idiomatic && <p style={styles.mineNote}><MessageSquare size={11} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("idiomático — no literal")}</p>}
               <p style={styles.exampleEn}>{phraseResult.meaning}</p>
               {phraseResult.meaningEs && <p style={styles.translationText}>{phraseResult.meaningEs}</p>}
-              {phraseResult.meaning && !phraseResult.meaning.startsWith("Couldn't") && (
+              {phraseResult.meaning && !phraseResult.error && (
                 <button
                   style={styles.smallAddBtn2}
                   onClick={() => {
